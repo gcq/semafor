@@ -2,22 +2,14 @@
 // devices are in it, data reconciles automatically over WebRTC. DOM only —
 // transport in sync/net.js, reconciliation in sync/merge.js.
 
-import { joinSync, makeRoomCode, probeRelays, webrtcSelfTest, STRATEGIES, STRAT_PREFIX, strategyFromCode, SYNC_BUILD } from '../sync/net.js';
+import { joinSync, makeRoomCode, webrtcSelfTest, SYNC_BUILD } from '../sync/net.js';
 
 let ctx = null;      // { root, api }
 let session = null;  // { leave }
-let el = null;       // status refs
-let strat = loadStrat();
-
-function loadStrat() {
-  try { const s = localStorage.getItem('onda.syncStrategy'); return STRATEGIES[s] ? s : 'mqtt'; } catch { return 'mqtt'; }
-}
-function saveStrat(s) { strat = s; try { localStorage.setItem('onda.syncStrategy', s); } catch { /* */ } }
 
 export function mountSync(root, api) {
   ctx = { root, api };
   root.addEventListener('click', onClick);
-  root.addEventListener('change', (e) => { if (e.target.dataset.act === 'strat') saveStrat(e.target.value); });
   render();
 }
 
@@ -32,7 +24,7 @@ function render(state = {}) {
   ctx.root.innerHTML = `
     <div class="ed-section">
       <h3>Sync with another device <span class="tag" style="float:right">build ${esc(SYNC_BUILD)}</span></h3>
-      <p class="muted-note" style="margin-top:-4px">Peer-to-peer over public relays — no server, nothing stored online. Both devices merge: nothing is lost, newest edits win, all observations are kept. <b>Both devices must show the same build.</b></p>
+      <p class="muted-note" style="margin-top:-4px">Peer-to-peer via a public broker — no server, nothing stored online. Both devices merge: nothing is lost, newest edits win, all observations are kept. <b>Both devices must show the same build.</b></p>
       ${session ? sessionHtml() : idleHtml()}
     </div>
     <div class="ed-section">
@@ -49,9 +41,6 @@ function render(state = {}) {
 
 function idleHtml() {
   return `
-    <div class="field"><label>Rendezvous</label>
-      <select data-act="strat">${Object.entries(STRATEGIES).map(([k, s]) => `<option value="${k}" ${k === strat ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></div>
-    <p class="muted-note" style="margin-top:-2px">If one won't connect on your network, try another.</p>
     <button class="sbtn primary" data-act="create" style="width:100%;padding:14px;margin:8px 0">Create a sync room</button>
     <div class="field"><input id="sync-code-in" placeholder="or enter a code" style="text-transform:uppercase" />
       <button class="sbtn" data-act="join">Join</button></div>
@@ -72,10 +61,8 @@ function sessionHtml() {
       <div id="sync-peers" class="muted-note"></div>
       <div id="sync-result" style="margin-top:8px"></div>
       <div class="row-actions" style="justify-content:center;margin-top:10px">
-        <button class="sbtn" data-act="probe">Test relays</button>
         <button class="sbtn danger" data-act="leave">Stop sync</button>
       </div>
-      <div id="sync-probe" class="muted-note" style="margin-top:8px;text-align:left"></div>
     </div>`;
 }
 
@@ -92,8 +79,7 @@ function qrSvg(text) {
 async function start(code, host) {
   if (session) session.leave?.();
   code = code.trim().toUpperCase();
-  const stratKey = strategyFromCode(code); // strategy travels with the code
-  session = { code, host, leave: null, strat: stratKey };
+  session = { code, host, leave: null };
   render();
   const set = (id, html) => { const n = document.getElementById(id); if (n) n.innerHTML = html; };
   try {
@@ -105,7 +91,7 @@ async function start(code, host) {
       onSynced: (st) => set('sync-result',
         `<div class="verdict linked"><div class="head" style="color:var(--green)">synced ✓</div>
          <div class="muted-note">+${st.obsAdded} observations, +${st.ixAdded} intersections, ${st.ixUpdated} updated, ${st.ixDeleted} removed</div></div>`),
-    }, stratKey, host);
+    }, host);
     if (session) session.leave = s.leave;
   } catch (e) {
     set('sync-status', 'could not start: ' + esc(e.message));
@@ -115,13 +101,12 @@ async function start(code, host) {
 function onClick(e) {
   const btn = e.target.closest('[data-act]'); if (!btn) return;
   switch (btn.dataset.act) {
-    case 'create': start(STRAT_PREFIX[strat] + makeRoomCode(), true); break;
+    case 'create': start(makeRoomCode(), true); break;
     case 'join': {
       const code = (document.getElementById('sync-code-in')?.value || '').trim().toUpperCase();
       if (code) start(code, false); break;
     }
     case 'leave': session?.leave?.(); session = null; render(); break;
-    case 'probe': runProbe(); break;
     case 'webrtc-test': runWebrtcTest(); break;
     case 'export': doExport(); break;
     case 'import': doImport(); break;
@@ -141,14 +126,6 @@ async function runWebrtcTest() {
   else if (has('relay')) { verdict = 'TURN reachable ✓ — should connect even across strict networks.'; color = 'var(--green)'; }
   else { verdict = 'STUN reachable ✓ — should connect on most networks.'; color = 'var(--green)'; }
   box.innerHTML = `<div>candidates: ${t.map(esc).join(', ') || 'none'}</div><div style="color:${color}">${verdict}</div>`;
-}
-
-function runProbe() {
-  const box = document.getElementById('sync-probe'); if (!box) return;
-  const results = {};
-  const paint = () => { box.innerHTML = 'Relays: ' + Object.entries(results).map(([u, s]) => `<div>${s === 'ok' ? '✓' : '✕'} ${esc(u)} — ${s}</div>`).join(''); };
-  box.textContent = 'testing relays…';
-  probeRelays(session?.strat || strat, (url, status) => { results[url] = status; paint(); });
 }
 
 async function doExport() {
