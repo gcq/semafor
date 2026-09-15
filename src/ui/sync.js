@@ -103,7 +103,7 @@ async function start(code, host) {
       onSynced: (st) => set('sync-result',
         `<div class="verdict linked"><div class="head" style="color:var(--green)">synced ✓</div>
          <div class="muted-note">+${st.obsAdded} observations, +${st.ixAdded} intersections, ${st.ixUpdated} updated, ${st.ixDeleted} removed</div></div>`),
-    }, stratKey);
+    }, stratKey, host);
     if (session) session.leave = s.leave;
   } catch (e) {
     set('sync-status', 'could not start: ' + esc(e.message));

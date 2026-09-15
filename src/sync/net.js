@@ -16,18 +16,24 @@ import { mergeBundles } from './merge.js';
 //  - nostr:   public relays — but many drop the ephemeral events discovery needs.
 // WebRTC (with public STUN) always carries the actual transfer.
 const CDN = 'https://cdn.jsdelivr.net/npm/trystero@0.21.5';
-export const SYNC_BUILD = 'b18'; // bump with the SW cache; shown in UI to confirm both devices match
+const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm';
+export const SYNC_BUILD = 'b19'; // bump with the SW cache; shown in UI to confirm both devices match
+// Default = PeerJS: a real (free, public) signaling broker that deterministically
+// pairs two peers by id. Trystero's decentralized backends proved unreliable
+// (tracker peer-dedup, dropped ephemeral events, blocked broker ports), so they
+// stay only as fallbacks.
 export const STRATEGIES = {
-  mqtt: { label: 'MQTT brokers', url: `${CDN}/mqtt/+esm`, wsProtocol: 'mqtt', relayUrls: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'] },
-  torrent: { label: 'WebTorrent trackers', url: `${CDN}/torrent/+esm`, relayUrls: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] },
-  nostr: { label: 'Nostr relays', url: `${CDN}/nostr/+esm`, relayUrls: ['wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.damus.io'] },
+  peerjs: { label: 'PeerJS broker', kind: 'peerjs' },
+  mqtt: { label: 'MQTT brokers', kind: 'trystero', url: `${CDN}/mqtt/+esm`, wsProtocol: 'mqtt', relayUrls: ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'] },
+  torrent: { label: 'WebTorrent trackers', kind: 'trystero', url: `${CDN}/torrent/+esm`, relayUrls: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] },
+  nostr: { label: 'Nostr relays', kind: 'trystero', url: `${CDN}/nostr/+esm`, relayUrls: ['wss://nos.lol', 'wss://relay.snort.social', 'wss://relay.damus.io'] },
 };
-const DEFAULT_STRATEGY = 'mqtt';
+const DEFAULT_STRATEGY = 'peerjs';
 
 // The strategy is encoded as the first char of the room code, so BOTH devices
 // always use the same backend — joining a code picks the creator's strategy,
 // regardless of each device's own dropdown default.
-export const STRAT_PREFIX = { mqtt: 'M', torrent: 'T', nostr: 'N' };
+export const STRAT_PREFIX = { peerjs: 'P', mqtt: 'M', torrent: 'T', nostr: 'N' };
 export function strategyFromCode(code) {
   const c = String(code || '').trim().toUpperCase();
   for (const [k, p] of Object.entries(STRAT_PREFIX)) if (c[0] === p) return k;
@@ -63,6 +69,7 @@ async function loadTrystero(stratKey) {
  */
 export function probeRelays(stratKey, onResult) {
   const s = STRATEGIES[stratKey] ?? STRATEGIES[DEFAULT_STRATEGY];
+  if (!s.relayUrls) { onResult('PeerJS public broker (0.peerjs.com)', 'ok'); return 1; }
   for (const url of s.relayUrls) {
     let done = false;
     const finish = (st) => { if (!done) { done = true; onResult(url, st); } };
@@ -98,10 +105,17 @@ export function makeRoomCode(len = 6) {
  *   onPeers: (n: number) => void,
  *   onSynced: (stats: object) => void,
  * }} handlers
- * @param {string} [stratKey='mqtt']
+ * @param {string} [stratKey='peerjs']
+ * @param {boolean} [isHost=false]  PeerJS needs to know who registers the id
  * @returns {Promise<{ leave: () => void }>}
  */
-export async function joinSync(code, handlers, stratKey = DEFAULT_STRATEGY) {
+export async function joinSync(code, handlers, stratKey = DEFAULT_STRATEGY, isHost = false) {
+  const strat = STRATEGIES[stratKey] ?? STRATEGIES[DEFAULT_STRATEGY];
+  if (strat.kind === 'peerjs') return joinSyncPeerJS(code, handlers, isHost);
+  return joinSyncTrystero(code, handlers, stratKey);
+}
+
+async function joinSyncTrystero(code, handlers, stratKey) {
   const { getBundle, applyMerged, onStatus, onPeers, onSynced } = handlers;
   const strat = STRATEGIES[stratKey] ?? STRATEGIES[DEFAULT_STRATEGY];
   let mod;
@@ -159,4 +173,54 @@ export async function joinSync(code, handlers, stratKey = DEFAULT_STRATEGY) {
 
   onStatus('waiting for the other device to join…');
   return { leave: () => { clearTimeout(watchdog); clearInterval(diag); try { room.leave(); } catch { /* noop */ } } };
+}
+
+// --- PeerJS transport: free public broker deterministically pairs by id. ---
+let _peerjs = null;
+async function loadPeerJS() {
+  if (!_peerjs) { const m = await import(/* @vite-ignore */ PEERJS_URL); _peerjs = m.Peer || m.default?.Peer || m.default; }
+  return _peerjs;
+}
+
+async function joinSyncPeerJS(code, handlers, isHost) {
+  const { getBundle, applyMerged, onStatus, onPeers, onSynced } = handlers;
+  let Peer;
+  try { onStatus('loading sync (PeerJS)…'); Peer = await loadPeerJS(); }
+  catch (e) { onStatus('could not load sync library: ' + e.message); throw e; }
+
+  const hostId = ('onda-semafor-' + code).toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  const opts = { config: STUN };
+  let peer, done = false;
+
+  const wire = (conn) => {
+    conn.on('open', async () => { onPeers(1); onStatus('connected — exchanging…'); try { conn.send(await getBundle()); } catch (e) { onStatus('send failed: ' + e.message); } });
+    conn.on('data', async (remote) => {
+      try {
+        const local = await getBundle();
+        const { merged, stats } = mergeBundles(local, remote);
+        await applyMerged(merged);
+        done = true; onSynced(stats); onStatus('synced ✓');
+      } catch (e) { onStatus('merge failed: ' + e.message); }
+    });
+    conn.on('error', (e) => onStatus('connection error: ' + (e?.type || e?.message || 'unknown')));
+  };
+
+  if (isHost) {
+    peer = new Peer(hostId, opts);
+    peer.on('open', () => onStatus('waiting for the other device to join…'));
+    peer.on('connection', wire);
+  } else {
+    peer = new Peer(opts); // random id
+    peer.on('open', () => { onStatus('connecting to host…'); wire(peer.connect(hostId, { reliable: true })); });
+  }
+  peer.on('error', (e) => {
+    const t = e?.type || '';
+    if (t === 'unavailable-id') onStatus('that code is already hosting elsewhere — pick a new one.');
+    else if (t === 'peer-unavailable') onStatus('no host on that code yet — make sure the other device tapped Create first.');
+    else onStatus('sync error: ' + (t || e?.message || 'unknown'));
+  });
+
+  // watchdog
+  const watchdog = setTimeout(() => { if (!done) onStatus('still not connected — check both use code ' + code + ', and try again.'); }, PEER_TIMEOUT_MS);
+  return { leave: () => { clearTimeout(watchdog); try { peer.destroy(); } catch { /* noop */ } } };
 }
