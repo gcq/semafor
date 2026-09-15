@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0b0e13" media="(prefers-color-scheme: dark)" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+  <title>Onda</title>
+  <style>
+    /* Light is the default; dark is applied when the browser reports it.
+       Signal colors (red/yellow/green) are identical in both themes. */
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f6fa; --panel: #ffffff; --panel2: #eef1f6; --text: #10151d;
+      --muted: #5c6b7e; --line: #d8dee8; --accent: #1d6fe0;
+      --red: #e23b3b; --yellow: #e0a800; --green: #1ea966; --dark: #c2cad6;
+      --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0e13; --panel: #151a22; --panel2: #1d2530; --text: #e7edf5;
+        --muted: #8b98aa; --line: #263041; --accent: #4da3ff;
+        --red: #ff4d4d; --yellow: #ffcf3f; --green: #33d17a; --dark: #3a4356;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: var(--safe-t) 16px var(--safe-b); display: flex; flex-direction: column;
+    }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+    header h1 { font-size: 18px; margin: 0; letter-spacing: 2px; font-weight: 700; }
+    header .sub { color: var(--muted); font-size: 12px; }
+    .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+    .tabs button, .btn {
+      background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px 8px; font-size: 14px; cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 700; }
+    main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .view { display: none; } .view.active { display: block; }
+
+    /* Live view */
+    .disc-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 8px 0 4px; }
+    .disc {
+      width: min(58vw, 240px); aspect-ratio: 1; border-radius: 50%; background: var(--dark);
+      box-shadow: inset 0 0 0 8px #0006, 0 0 60px 0 transparent; transition: background .2s, box-shadow .2s;
+    }
+    .disc.red { background: var(--red); box-shadow: inset 0 0 0 8px #0004, 0 0 70px 6px #ff4d4d66; }
+    .disc.green { background: var(--green); box-shadow: inset 0 0 0 8px #0004, 0 0 70px 6px #33d17a66; }
+    .disc.yellow { background: var(--yellow); box-shadow: inset 0 0 0 8px #0004, 0 0 70px 6px #ffcf3f66; }
+    .disc.flashRed { animation: flash 1s steps(1) infinite; background: var(--red); }
+    .disc.flashYel { animation: flash 1s steps(1) infinite; background: var(--yellow); }
+    @keyframes flash { 50% { background: var(--dark); box-shadow: inset 0 0 0 8px #0006; } }
+    .count { font-size: 64px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+    .count .unit { font-size: 22px; color: var(--muted); font-weight: 600; }
+    .count.range { font-size: 40px; }
+    .ind-label { color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
+    .ix-name { font-size: 20px; font-weight: 700; text-align: center; }
+    .meta { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 6px; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+    .badge.high { color: var(--green); } .badge.medium { color: var(--yellow); } .badge.low { color: var(--red); }
+    .badge.uncertain { color: var(--yellow); }
+
+    .upcoming { margin-top: 18px; }
+    .upcoming h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .row { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 8px; cursor: pointer; }
+    .row.sel { border-color: var(--accent); }
+    .dot { width: 16px; height: 16px; border-radius: 50%; background: var(--dark); flex: none; }
+    .dot.red { background: var(--red); } .dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); }
+    .row .name { flex: 1; font-weight: 600; }
+    .row .eta { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    /* Capture view */
+    .cap-target { text-align: center; color: var(--muted); margin: 6px 0 14px; }
+    .cap-target b { color: var(--text); }
+    .cap-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .cap { border: none; border-radius: 18px; padding: 34px 0; font-size: 18px; font-weight: 800; color: #06121f; }
+    .cap.red { background: var(--red); color: #fff; } .cap.green { background: var(--green); } .cap.yellow { background: var(--yellow); }
+    .cap.flashYel { background: repeating-linear-gradient(45deg, var(--yellow), var(--yellow) 8px, #0000 8px, #0000 16px), var(--panel2); }
+    .cap.dark { background: var(--panel2); color: var(--muted); }
+    .cap.small { padding: 16px 0; font-size: 15px; }
+    .cap:active { transform: scale(.97); }
+    .cap-log { margin-top: 16px; color: var(--muted); font-size: 13px; max-height: 30vh; overflow: auto; }
+    .cap-log div { padding: 4px 0; border-bottom: 1px solid var(--line); }
+    .advance { width: 100%; border: none; border-radius: 18px; padding: 22px 0; font-size: 20px; font-weight: 800; background: var(--accent); color: #06121f; margin-top: 12px; cursor: pointer; }
+    .advance:active { transform: scale(.98); }
+    .advance:disabled { opacity: .45; }
+    .phase-now { text-align: center; margin-top: 8px; color: var(--muted); font-size: 14px; }
+    .phase-now b { color: var(--text); }
+    .phase-picker { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+    .phase-opt { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); cursor: pointer; }
+    .phase-opt.sel { border-color: var(--accent); background: var(--panel2); }
+    .phase-opt .pi { width: 22px; height: 22px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; font-size: 12px; color: var(--muted); flex: none; }
+    .phase-opt .pname { flex: 1; font-weight: 600; }
+    .phase-opt .swatches { display: flex; gap: 4px; }
+
+    /* Editor + Analyze */
+    .ed-section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 12px; }
+    .ed-section h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+    .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .field label { width: 88px; color: var(--muted); font-size: 13px; flex: none; }
+    input, select {
+      background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 10px; font-size: 15px; width: 100%; min-width: 0;
+    }
+    input[type="number"] { width: 84px; flex: none; }
+    .sbtn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+    .sbtn.danger { color: var(--red); border-color: var(--red); }
+    .sbtn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 700; }
+    .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .stage { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px; background: var(--panel2); }
+    .stage-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .stage-top .idx { width: 22px; height: 22px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; font-size: 12px; flex: none; }
+    .stage-grid { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    .sg-row { display: flex; align-items: center; gap: 8px; }
+    .sg-row .sg-name { width: 100px; font-size: 13px; color: var(--muted); flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--dark); }
+    .swatch.red { background: var(--red); } .swatch.green { background: var(--green); } .swatch.yellow { background: var(--yellow); }
+    .swatch.redAmber { background: linear-gradient(var(--red) 50%, var(--yellow) 50%); }
+    .swatch.flashRed { background: var(--red); } .swatch.flashYel { background: var(--yellow); } .swatch.dark { background: var(--dark); }
+    .muted-note { color: var(--muted); font-size: 12px; }
+    .verdict { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; background: var(--panel); }
+    .verdict .head { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 4px; }
+    .verdict.linked .head { color: var(--green); }
+    .verdict.independent .head { color: var(--muted); }
+    .corridor-chip { display: inline-block; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; margin: 2px; font-size: 13px; }
+    .stage-est { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+    .stage-est .dur { font-variant-numeric: tabular-nums; font-weight: 700; width: 56px; }
+    .tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .tag.actuated { color: var(--yellow); border-color: var(--yellow); }
+    .tag.fixed { color: var(--green); border-color: var(--green); }
+    .map { height: 220px; border-radius: 14px; overflow: hidden; margin-bottom: 12px; border: 1px solid var(--line); }
+    .leaflet-container { background: var(--panel2); font: inherit; }
+    .onda-pin { width: 20px; height: 20px; border-radius: 50% 50% 50% 0; background: var(--accent); transform: rotate(-45deg); border: 2px solid #fff; box-shadow: 0 1px 4px #0006; }
+    .leaflet-tooltip.onda-tip { background: #000a; color: #fff; border: none; box-shadow: none; font-size: 11px; padding: 2px 6px; border-radius: 5px; }
+    .leaflet-tooltip.onda-tip::before { display: none; }
+    footer { display: flex; gap: 8px; padding: 12px 0; }
+    footer .btn { flex: 1; font-size: 13px; padding: 10px; }
+    .hint { color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>ONDA</h1><div class="sub" id="gps-sub">locating…</div></div>
+  </header>
+  <nav class="tabs" style="grid-template-columns:repeat(5,1fr)">
+    <button id="tab-live" aria-selected="true">Live</button>
+    <button id="tab-capture" aria-selected="false">Capture</button>
+    <button id="tab-edit" aria-selected="false">Edit</button>
+    <button id="tab-analyze" aria-selected="false">Analyze</button>
+    <button id="tab-sync" aria-selected="false">Sync</button>
+  </nav>
+
+  <main>
+    <section id="view-live" class="view active">
+      <div class="disc-wrap">
+        <div class="disc" id="disc"></div>
+        <div class="ind-label" id="ind-label">—</div>
+        <div class="count" id="count"><span id="count-num">--</span><span class="unit">s</span></div>
+      </div>
+      <div class="ix-name" id="ix-name">No intersection selected</div>
+      <div class="meta" id="meta"></div>
+      <div class="phase-now" id="phase-now"></div>
+      <div class="cap-buttons" id="live-log" style="grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px" hidden></div>
+
+      <div class="upcoming">
+        <h3>Coming up</h3>
+        <div id="upcoming-list"></div>
+      </div>
+      <div class="hint" id="live-hint"></div>
+    </section>
+
+    <section id="view-capture" class="view">
+      <div class="cap-target">Intersection: <b id="cap-name">—</b></div>
+      <div class="field" style="margin:8px 0"><label>Watching light</label>
+        <select id="cap-head"></select></div>
+      <p class="hint" style="margin-top:0">Tap the color the light shows <b>now</b>, and again on every change. Each tap is timestamped.</p>
+      <div class="cap-buttons" id="cap-buttons" style="grid-template-columns:repeat(2,1fr)"></div>
+      <div class="cap-log" id="cap-log"></div>
+    </section>
+
+    <section id="view-edit" class="view">
+      <div id="ed-map" class="map"></div>
+      <div id="editor-root"></div>
+    </section>
+
+    <section id="view-analyze" class="view">
+      <div id="analyze-root"></div>
+    </section>
+
+    <section id="view-sync" class="view">
+      <div id="sync-root"></div>
+    </section>
+  </main>
+
+  <script type="module" src="src/ui/app.js"></script>
+</body>
+</html>
