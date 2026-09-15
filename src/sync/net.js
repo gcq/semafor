@@ -17,7 +17,7 @@ import { mergeBundles } from './merge.js';
 // WebRTC (with public STUN) always carries the actual transfer.
 const CDN = 'https://cdn.jsdelivr.net/npm/trystero@0.21.5';
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm';
-export const SYNC_BUILD = 'b19'; // bump with the SW cache; shown in UI to confirm both devices match
+export const SYNC_BUILD = 'b20'; // bump with the SW cache; shown in UI to confirm both devices match
 // Default = PeerJS: a real (free, public) signaling broker that deterministically
 // pairs two peers by id. Trystero's decentralized backends proved unreliable
 // (tracker peer-dedup, dropped ephemeral events, blocked broker ports), so they

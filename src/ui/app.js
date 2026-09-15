@@ -35,8 +35,24 @@ const state = {
   if (autoJoinFromUrl()) showView('sync');
   tick();
   setInterval(tick, 250);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  registerSW();
 })();
+
+// Register the worker so updates land on a normal reload:
+//  - updateViaCache:'none' → the browser never HTTP-caches sw.js (GitHub Pages
+//    sets max-age=600 which otherwise pins the old worker for 10 min);
+//  - reg.update() on load forces an immediate check;
+//  - a one-shot reload when a new worker takes control pulls the fresh assets.
+function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((reg) => { reg.update().catch(() => {}); })
+    .catch(() => {});
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return; reloaded = true; location.reload();
+  });
+}
 
 // ---------- gps ----------
 function startGps() {
