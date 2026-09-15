@@ -17,7 +17,7 @@ import { mergeBundles } from './merge.js';
 // WebRTC (with public STUN) always carries the actual transfer.
 const CDN = 'https://cdn.jsdelivr.net/npm/trystero@0.21.5';
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm';
-export const SYNC_BUILD = 'b20'; // bump with the SW cache; shown in UI to confirm both devices match
+export const SYNC_BUILD = 'b21'; // bump with the SW cache; shown in UI to confirm both devices match
 // Default = PeerJS: a real (free, public) signaling broker that deterministically
 // pairs two peers by id. Trystero's decentralized backends proved unreliable
 // (tracker peer-dedup, dropped ephemeral events, blocked broker ports), so they
@@ -82,6 +82,35 @@ export function probeRelays(stratKey, onResult) {
     } catch { finish('blocked'); }
   }
   return s.relayUrls.length;
+}
+
+/**
+ * WebRTC self-test: gather ICE candidates against our STUN/TURN servers to see
+ * what the network actually allows — no peer needed. Candidate types:
+ *   host  = local only (always present if WebRTC is enabled at all)
+ *   srflx = STUN reachable (your public address is discoverable)
+ *   relay = TURN reachable (can traverse strict NATs / firewalls)
+ * If only 'host' appears, STUN/TURN is blocked and cross-network P2P can't work
+ * here (typical on locked-down corporate networks).
+ * @returns {Promise<{ ok: boolean, types: string[], error?: string }>}
+ */
+export function webrtcSelfTest() {
+  return new Promise((resolve) => {
+    let pc;
+    try { pc = new RTCPeerConnection(STUN); }
+    catch (e) { resolve({ ok: false, types: [], error: 'RTCPeerConnection unavailable: ' + e.message }); return; }
+    const types = new Set();
+    const finish = () => { try { pc.close(); } catch { /* */ } resolve({ ok: types.size > 0, types: [...types] }); };
+    const timer = setTimeout(finish, 8000);
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) { clearTimeout(timer); finish(); return; }
+      const m = /typ (\w+)/.exec(e.candidate.candidate || '');
+      if (m) types.add(m[1]);
+    };
+    pc.createDataChannel('probe');
+    pc.createOffer().then((o) => pc.setLocalDescription(o))
+      .catch((e) => { clearTimeout(timer); resolve({ ok: false, types: [...types], error: e.message }); });
+  });
 }
 
 /** A short, unambiguous room code (no easily-confused chars). */

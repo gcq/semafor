@@ -2,7 +2,7 @@
 // devices are in it, data reconciles automatically over WebRTC. DOM only —
 // transport in sync/net.js, reconciliation in sync/merge.js.
 
-import { joinSync, makeRoomCode, probeRelays, STRATEGIES, STRAT_PREFIX, strategyFromCode, SYNC_BUILD } from '../sync/net.js';
+import { joinSync, makeRoomCode, probeRelays, webrtcSelfTest, STRATEGIES, STRAT_PREFIX, strategyFromCode, SYNC_BUILD } from '../sync/net.js';
 
 let ctx = null;      // { root, api }
 let session = null;  // { leave }
@@ -54,7 +54,9 @@ function idleHtml() {
     <p class="muted-note" style="margin-top:-2px">If one won't connect on your network, try another.</p>
     <button class="sbtn primary" data-act="create" style="width:100%;padding:14px;margin:8px 0">Create a sync room</button>
     <div class="field"><input id="sync-code-in" placeholder="or enter a code" style="text-transform:uppercase" />
-      <button class="sbtn" data-act="join">Join</button></div>`;
+      <button class="sbtn" data-act="join">Join</button></div>
+    <button class="sbtn" data-act="webrtc-test" style="margin-top:10px">Test WebRTC on this network</button>
+    <div id="sync-webrtc" class="muted-note" style="margin-top:6px"></div>`;
 }
 
 function sessionHtml() {
@@ -120,9 +122,25 @@ function onClick(e) {
     }
     case 'leave': session?.leave?.(); session = null; render(); break;
     case 'probe': runProbe(); break;
+    case 'webrtc-test': runWebrtcTest(); break;
     case 'export': doExport(); break;
     case 'import': doImport(); break;
   }
+}
+
+async function runWebrtcTest() {
+  const box = document.getElementById('sync-webrtc'); if (!box) return;
+  box.textContent = 'testing WebRTC…';
+  const r = await webrtcSelfTest();
+  if (r.error) { box.innerHTML = `<span style="color:var(--red)">WebRTC unavailable: ${esc(r.error)}</span>`; return; }
+  const t = r.types;
+  const has = (x) => t.includes(x);
+  let verdict, color;
+  if (!t.length) { verdict = 'WebRTC appears blocked — sync can’t work on this network (VPN/firewall?).'; color = 'var(--red)'; }
+  else if (!has('srflx') && !has('relay')) { verdict = 'Only local candidates — STUN/TURN blocked (very likely a VPN/corporate firewall). P2P won’t connect across networks. Turn off the VPN and retry.'; color = 'var(--red)'; }
+  else if (has('relay')) { verdict = 'TURN reachable ✓ — should connect even across strict networks.'; color = 'var(--green)'; }
+  else { verdict = 'STUN reachable ✓ — should connect on most networks.'; color = 'var(--green)'; }
+  box.innerHTML = `<div>candidates: ${t.map(esc).join(', ') || 'none'}</div><div style="color:${color}">${verdict}</div>`;
 }
 
 function runProbe() {
