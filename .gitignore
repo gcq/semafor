@@ -1,2 +1,10 @@
 .DS_Store
 *.log
+
+# Private data — never commit to the public repo (your GPS history / exports)
+*.ndjson
+positions*.csv
+onda-export*.json
+*.local.sql
+tools/teslamate/out/
+out/

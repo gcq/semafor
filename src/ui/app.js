@@ -2,14 +2,19 @@
 // store, and paints the DOM on a timer. No framework.
 
 import * as store from '../store/db.js';
-import { predictIntersection, activePlan } from '../predict/state.js';
-import { rankNext } from '../nav/proximity.js';
+import { predictIntersection, activePlan, predictHead, timeToAspect } from '../predict/state.js';
+import { rankNext, bearingDeg } from '../nav/proximity.js';
+import { reconstructPlan, reconstructionToPlan } from '../inference/reconstruct.js';
 import { uid } from '../domain/model.js';
+import { drawScene } from './live-scene.js';
 import { mountEditor, refreshEditor } from './editor.js';
 import { mountAnalyze, refreshAnalyze } from './analyze.js';
 import { mountSync, autoJoinFromUrl } from './sync.js';
 
 const ASPECT_LABEL = { green: 'Green', 'flash-amber': 'Flashing amber', amber: 'Amber', red: 'Red', off: 'Off' };
+// Live re-anchor window: fold recent taps so the current session's cycle/phase
+// dominate any older, drifted observations (see the TeslaMate long-span finding).
+const LIVE_WINDOW_MS = 6 * 3600 * 1000;
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -18,9 +23,14 @@ const state = {
   selectedId: null,        // manual override of "next"
   pos: null,               // {lat, lon}
   heading: null,
+  headingFrozen: null,     // last non-null heading (orientation freeze when stopped)
   speed: 0,
   captureHead: null,       // { ixId, id } head being watched in Capture
   captureLog: [],
+  sceneHead: null,         // { ixId, id } head made active by tapping its pole
+  live: { ixId: null, plan: null, rec: null }, // live reconstruction cache
+  lastObs: null,           // { id, ixId } for undo
+  sceneBoxes: [],          // canvas hit boxes from the last draw
 };
 
 // ---------- boot ----------
@@ -61,6 +71,9 @@ function startGps() {
     (p) => {
       state.pos = { lat: p.coords.latitude, lon: p.coords.longitude };
       state.heading = Number.isFinite(p.coords.heading) ? p.coords.heading : null;
+      // Keep the last real heading: GPS course goes null at a standstill — exactly
+      // when you tap — so the scene freezes to it instead of spinning.
+      if (state.heading != null && state.speed >= 1.5) state.headingFrozen = state.heading;
       state.speed = Number.isFinite(p.coords.speed) ? p.coords.speed : 0;
       $('gps-sub').textContent = state.speed >= 1.5
         ? `${Math.round(state.speed * 3.6)} km/h · ${Math.round(state.heading ?? 0)}°`
@@ -88,58 +101,150 @@ function recomputeRanking() {
 // ---------- render loop ----------
 function tick() {
   recomputeRanking();
-  renderLive();
+  const ix = currentIntersection();
+  // On changing intersection, drop the manual head pick and refresh the live
+  // reconstruction (async; the render below uses whatever's cached meanwhile).
+  if (ix && state.live.ixId !== ix.id) { state.sceneHead = null; refreshLiveModel(ix); }
+  renderLive(ix);
   renderCapture();
 }
 
-function renderLive() {
-  const ix = currentIntersection();
-  const disc = $('disc');
-  if (!ix) { $('ix-name').textContent = 'No intersections'; return; }
+// Reconstruct a live plan from this intersection's observations (recent-window
+// re-anchored) so predictions update as you tap — this is the per-session anchor.
+async function refreshLiveModel(ix) {
+  const ixId = ix.id;
+  state.live.ixId = ixId; // claim now so tick() doesn't re-fire every frame
+  try {
+    const obs = await store.observationsFor(ixId);
+    const rec = reconstructPlan(obs, headsOf(ix).map((h) => h.id), { recentWindowMs: LIVE_WINDOW_MS, now: Date.now() });
+    if (state.live.ixId !== ixId) return; // switched away during the await
+    state.live = { ixId, plan: rec ? reconstructionToPlan(rec) : null, rec };
+  } catch { if (state.live.ixId === ixId) state.live = { ixId, plan: null, rec: null }; }
+}
 
-  const mv = ix.movements?.find((m) => !m.unsignalized) ?? ix.movements?.[0];
-  const pred = predictIntersection(ix, { movementId: mv?.id });
+function livePlanFor(ix, now) {
+  if (state.live.ixId === ix.id && state.live.plan) return state.live.plan;
+  return activePlan(ix.plans, now);
+}
+
+// Head to predict + capture: a pole you tapped, else the approaching movement's
+// head, else the first head.
+function resolveActiveHead(ix, heads) {
+  if (!heads.length) return null;
+  if (state.sceneHead?.ixId === ix.id) { const h = heads.find((x) => x.id === state.sceneHead.id); if (h) return h; }
+  const mv = ix.movements?.find((m) => !m.unsignalized && m.headId);
+  if (mv?.headId) { const h = heads.find((x) => x.id === mv.headId); if (h) return h; }
+  return heads[0];
+}
+
+function renderLive(ix) {
+  ix = ix ?? currentIntersection();
+  if (!ix) { $('ix-name').textContent = 'No intersections'; $('active-head').hidden = true; return; }
   $('ix-name').textContent = ix.name;
 
-  if (!pred) {
-    disc.className = 'disc'; $('ind-label').textContent = 'no active plan';
-    $('count-num').textContent = '--'; $('meta').innerHTML = ''; return;
-  }
+  const now = Date.now();
+  const plan = livePlanFor(ix, now);
+  const heads = headsOf(ix);
+  const active = resolveActiveHead(ix, heads);
 
-  disc.className = `disc ${pred.color}`;
-  $('ind-label').textContent = ASPECT_LABEL[pred.aspect] ?? pred.aspect;
+  // scene
+  const aspectOf = (hid) => (plan ? (predictHead(plan, hid, now)?.aspect ?? 'off') : 'off');
+  const ego = state.pos;
+  const upDeg = state.heading ?? state.headingFrozen ?? (ego ? bearingDeg(ego, ix.location) : 0);
+  const canvas = $('live-scene');
+  if (canvas) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
 
-  const countEl = $('count');
-  if (pred.uncertain && pred.range) {
-    countEl.classList.add('range');
-    $('count-num').textContent = `${pred.range[0]}–${pred.range[1]}`;
-  } else {
-    countEl.classList.remove('range');
-    $('count-num').textContent = pred.secToChange;
-  }
-
-  const plan = activePlan(ix.plans, Date.now());
-  const conf = plan?.confidence?.level ?? 'low';
-  const parts = [`<span class="badge ${conf}">confidence: ${conf}</span>`];
-  if (plan?.name) parts.push(`<span class="badge">${plan.name}</span>`);
-  if (pred.uncertain) parts.push(`<span class="badge uncertain">sensor-based · estimate</span>`);
-  if (mv) parts.push(`<span class="badge">${esc(mv.label || (mv.from + '→' + mv.to))}</span>`);
-  $('meta').innerHTML = parts.join('');
-
-  // Quick color-log buttons for the head you're approaching, to keep refining.
-  const head = mv?.headId;
-  const box = $('live-log');
-  if (head) {
-    $('phase-now').innerHTML = `Log what you see for <b>${esc(mv.label || (mv.from + '→' + mv.to))}</b>:`;
-    box.hidden = false;
-    box.innerHTML = colorButtonsHtml(true);
-    box.querySelectorAll('.cap').forEach((b) => b.onclick = () => logAspect(ix.id, head, b.dataset.aspect));
-  } else {
-    $('phase-now').textContent = ''; box.hidden = true;
-  }
-
+  renderCountdown(plan, active, now);
+  renderLiveMeta(ix, plan, active);
+  renderActiveHead(ix, active);
   renderUpcoming(ix);
-  $('live-hint').textContent = state.selectedId ? 'Manually selected — tap it again to auto-follow GPS.' : '';
+  $('live-hint').textContent = state.selectedId
+    ? 'Manually selected — tap it again to auto-follow GPS.'
+    : (active ? 'Tap a color as it changes. Tap a pole to switch heads.' : '');
+}
+
+// Headline: seconds until the active head next turns green (or green time left).
+function renderCountdown(plan, active, now) {
+  const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label'), count = $('count');
+  count.classList.remove('range');
+  if (!plan || !active) {
+    ind.textContent = plan ? '—' : 'learning';
+    num.textContent = '--';
+    cap.textContent = plan ? '' : 'tap colors to learn';
+    return;
+  }
+  const pred = predictHead(plan, active.id, now);
+  ind.textContent = ASPECT_LABEL[pred?.aspect] ?? '—';
+  if (pred?.aspect === 'green') {
+    if (pred.uncertain && pred.range) { count.classList.add('range'); num.textContent = `${pred.range[0]}–${pred.range[1]}`; }
+    else num.textContent = pred.secToChange;
+    cap.textContent = pred.uncertain ? 'green · est. left' : 'green — time left';
+    return;
+  }
+  const tg = timeToAspect(plan, active.id, now, 'green');
+  if (!tg) { num.textContent = '--'; cap.textContent = 'no green in model'; return; }
+  num.textContent = tg.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
+  cap.textContent = tg.uncertain ? 'to green · estimate' : 'to green';
+}
+
+function renderLiveMeta(ix, plan, active) {
+  const rec = state.live.ixId === ix.id ? state.live.rec : null;
+  const verdict = active && rec?.headVerdicts?.[active.id];
+  const parts = [];
+  const conf = plan?.confidence?.level;
+  if (conf) parts.push(`<span class="badge ${conf}">confidence: ${conf}</span>`);
+  if (verdict === 'fixed') parts.push('<span class="badge high">fixed · predictable</span>');
+  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">actuated · range only</span>');
+  else if (verdict === 'insufficient') parts.push('<span class="badge">need more taps</span>');
+  if (active) parts.push(`<span class="badge">${esc(active.label)}</span>`);
+  $('meta').innerHTML = parts.join('');
+}
+
+// The big upright tap panel for the active head (rebuilt only when it changes, so
+// taps stay responsive under the 250ms render loop).
+function renderActiveHead(ix, active) {
+  const box = $('active-head');
+  if (!active) { box.hidden = true; box.innerHTML = ''; state._ahKey = null; return; }
+  box.hidden = false;
+  const canUndo = state.lastObs?.ixId === ix.id;
+  const key = `${ix.id}|${active.id}|${canUndo}`;
+  if (state._ahKey === key) return;
+  state._ahKey = key;
+  box.innerHTML = `
+    <div class="ah-top"><span class="ah-name">${esc(active.label)}</span></div>
+    <div class="ah-lamps">
+      <button class="cap green" data-asp="green">Green</button>
+      <button class="cap yellow" data-asp="amber">Amber</button>
+      <button class="cap red" data-asp="red">Red</button>
+    </div>
+    <div class="ah-more">
+      <button class="cap flashYel small" data-asp="flash-amber">Flashing amber</button>
+      <button class="cap dark small" data-asp="off">Off / dark</button>
+    </div>
+    <p class="ah-hint">Tap a color the instant it changes. Tapping the current color just logs presence.</p>
+    <button class="ah-undo" data-act="undo" ${canUndo ? '' : 'disabled'}>↶ undo last tap</button>`;
+  box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, active.id, b.dataset.asp)));
+  const u = box.querySelector('[data-act="undo"]');
+  if (u) u.onclick = undoLast;
+}
+
+// Turn a tap on a pole in the scene into "make this head active".
+function onSceneClick(e) {
+  const ix = currentIntersection(); if (!ix) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const hit = state.sceneBoxes.find((b) => b.headId && x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
+  if (hit) { state.sceneHead = { ixId: ix.id, id: hit.headId }; tick(); }
+}
+
+async function undoLast() {
+  if (!state.lastObs) return;
+  const { id, ixId } = state.lastObs;
+  await store.deleteObservation(id);
+  state.lastObs = null;
+  const ix = state.intersections.find((i) => i.id === ixId);
+  if (ix) await refreshLiveModel(ix);
+  tick();
 }
 
 const ASPECT_BTNS = [
@@ -209,18 +314,27 @@ function renderCapture() {
     .map((l) => `<div>${new Date(l.t).toLocaleTimeString()} · <b>${esc(l.aspect)}</b> · ${esc(l.head)} @ ${esc(l.ix)}</div>`).join('');
 }
 
-// Append one aspect observation for a head.
-async function logAspect(intersectionId, headId, aspect) {
+// Append one aspect observation for a head. `kind` (onset|presence) is inferred
+// from whether the tapped color matches what the model currently shows.
+async function logAspect(intersectionId, headId, aspect, kind) {
   const ix = state.intersections.find((i) => i.id === intersectionId); if (!ix || !headId) return;
+  if (!kind) {
+    const plan = livePlanFor(ix, Date.now());
+    const cur = plan ? predictHead(plan, headId, Date.now())?.aspect : null;
+    kind = cur && cur === aspect ? 'presence' : 'onset';
+  }
   const ev = {
-    id: uid('obs'), intersectionId, headId, aspect, t: Date.now(),
+    id: uid('obs'), intersectionId, headId, aspect, kind, t: Date.now(),
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
+  state.lastObs = { id: ev.id, ixId: intersectionId };
   const head = headsOf(ix).find((h) => h.id === headId);
-  state.captureLog.push({ t: ev.t, aspect, head: head?.label ?? headId, ix: ix.name });
+  state.captureLog.push({ t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
+  await refreshLiveModel(ix);
   renderCapture();
+  tick();
 }
 
 // ---------- wiring ----------
@@ -230,6 +344,7 @@ function wireUi() {
   $('tab-edit').onclick = () => showView('edit');
   $('tab-analyze').onclick = () => showView('analyze');
   $('tab-sync').onclick = () => showView('sync');
+  $('live-scene').addEventListener('click', onSceneClick);
 }
 
 // Reload the intersection set from the store and refresh every view.

@@ -61,7 +61,7 @@ export function predictHead(plan, headId, now) {
   for (let i = 0; i < phases.length; i++) {
     const len = phases[i].timing.sec;
     if (t < acc + len || i === phases.length - 1) { idx = i; break; }
-    if (phases[i].timing.type === 'actuated') uncertainBefore = true;
+    if (phases[i].timing.type === 'actuated' || phases[i].partial) uncertainBefore = true;
     acc += len;
   }
   const phase = phases[idx];
@@ -70,7 +70,7 @@ export function predictHead(plan, headId, now) {
   const aspect = phase.states[headId] ?? 'off';
   const nextPhase = phases[(idx + 1) % phases.length];
 
-  const uncertain = uncertainBefore || phase.timing.type === 'actuated';
+  const uncertain = uncertainBefore || phase.timing.type === 'actuated' || !!phase.partial;
   let range = null;
   if (phase.timing.type === 'actuated') {
     const min = Math.max(0, (phase.timing.min ?? phase.timing.sec) - elapsed);
@@ -83,6 +83,51 @@ export function predictHead(plan, headId, now) {
     secToChange: Math.round(remaining), range, uncertain,
     next: nextPhase.states[headId] ?? 'off', phaseIndex: idx,
   };
+}
+
+/**
+ * Seconds until a head NEXT turns `targetAspect` (its onset), scanning forward
+ * from `now`. This is the "green in T seconds" horizon the Live view needs: it
+ * answers "when will it change TO green", not "how long until the current phase
+ * ends". If the head is already showing the target, secToAspect is 0. Returns
+ * null if the plan never shows that aspect for the head.
+ *
+ * `uncertain` is set when any phase between now and that onset is actuated or
+ * partial (an unobserved transition), so the horizon is an estimate, not a clock.
+ * @param {TimingPlan} plan
+ * @param {string} headId
+ * @param {number} now
+ * @param {import('../domain/model.js').Aspect} targetAspect
+ * @returns {{ secToAspect: number, current: boolean, uncertain: boolean }|null}
+ */
+export function timeToAspect(plan, headId, now, targetAspect = 'green') {
+  if (!plan?.stages?.length) return null;
+  const phases = plan.stages;
+  if (!phases.some((p) => (p.states[headId] ?? 'off') === targetAspect)) return null;
+
+  const len = phases.reduce((s, p) => s + p.timing.sec, 0);
+  if (!len) return null;
+  const t = cycleTimeMs(plan, now) / 1000;
+
+  // locate current phase + offset
+  let acc = 0, idx = 0;
+  for (let i = 0; i < phases.length; i++) {
+    if (t < acc + phases[i].timing.sec || i === phases.length - 1) { idx = i; break; }
+    acc += phases[i].timing.sec;
+  }
+  const aspectOf = (i) => phases[i].states[headId] ?? 'off';
+  if (aspectOf(idx) === targetAspect) return { secToAspect: 0, current: true, uncertain: phases[idx].timing.type === 'actuated' || !!phases[idx].partial };
+
+  // walk forward to the next phase whose aspect is the target (an onset)
+  let remaining = phases[idx].timing.sec - (t - acc);
+  let uncertain = phases[idx].timing.type === 'actuated' || !!phases[idx].partial;
+  for (let step = 1; step <= phases.length; step++) {
+    const j = (idx + step) % phases.length;
+    if (aspectOf(j) === targetAspect) return { secToAspect: Math.round(remaining), current: false, uncertain };
+    if (phases[j].timing.type === 'actuated' || phases[j].partial) uncertain = true;
+    remaining += phases[j].timing.sec;
+  }
+  return null;
 }
 
 /**

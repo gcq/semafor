@@ -22,10 +22,27 @@
 
 const FIXED_CV = 0.15;
 const MAX_CYCLE_SEC = 600;
+const MIN_ONSETS_TO_JUDGE = 3; // below this a head is 'insufficient', not fixed/actuated
+
+// Spanish signal grammar: green → amber → red → green. There is NO red+amber
+// step (that's UK/DE). flash-amber and off are permissive/degraded states that
+// can precede or follow anything. LEGAL_NEXT[a] = aspects that may directly
+// follow `a`; anything else means an aspect went unobserved between two taps.
+const LEGAL_NEXT = {
+  green: ['amber', 'flash-amber', 'off'],
+  amber: ['red', 'flash-amber', 'off'],
+  red: ['green', 'flash-amber', 'off'],
+  'flash-amber': ['green', 'amber', 'red', 'off'],
+  off: ['green', 'amber', 'red', 'flash-amber'],
+};
+const isLegalNext = (a, b) => a === b || (LEGAL_NEXT[a] ?? []).includes(b);
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
 const round1 = (x) => Math.round(x * 10) / 10;
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
+// Circular distance between two ring positions (0..period), 0..period/2.
+const circDist = (a, b, period) => { const d = Math.abs(a - b) % period; return Math.min(d, period - d); };
 
 // Circular statistics on a ring of length `period` (positions wrap at 0≡period).
 function circMean(vals, period) {
@@ -61,13 +78,17 @@ export function estimateCycleSec(heads) {
   for (const evs of Object.values(heads)) {
     const lastOf = {};
     for (const e of evs) {
+      if (e.kind === 'presence') continue; // presence never marks a cycle boundary
       if (lastOf[e.aspect] != null) gaps.push((e.t - lastOf[e.aspect]) / 1000);
       lastOf[e.aspect] = e.t;
     }
   }
   const clean = gaps.filter((g) => g > 1 && g < MAX_CYCLE_SEC);
   if (clean.length < 2) return null;
-  // Base cycle = the smallest gaps' median; larger gaps are ~integer multiples.
+  // Base cycle = the smallest gaps' median; larger gaps are ~integer multiples
+  // (a tap was missed for a cycle or two). Taking the median of the sub-median
+  // gaps is robust both to those multiples and to onset jitter, as long as the
+  // true cycle is the most common gap — which a consecutive-tap burst guarantees.
   const base = median(clean.filter((g) => g <= median(clean) * 1.5));
   return base > 0 ? round1(base) : null;
 }
@@ -75,13 +96,33 @@ export function estimateCycleSec(heads) {
 /**
  * @typedef {Object} HeadWindows
  * @property {string} headId
- * @property {Array<{ pos: number, aspect: Aspect }>} onsets  sorted boundary onsets
+ * @property {Array<{ pos: number, aspect: Aspect, nextPartial: boolean }>} onsets  sorted boundary onsets
  * @property {number} maxSpread   worst boundary spread (s) -> fixed vs actuated
- * @property {number} samples
+ * @property {number} samples     onset events folded (excludes presence)
+ * @property {'fixed'|'actuated'|'insufficient'} verdict
  */
 
+// Drop one-off outlier positions (fat-finger taps) before averaging a boundary,
+// while leaving a systematically-wandering (actuated) cluster intact. Circular
+// MAD with a seconds floor so a tight, clean cluster rejects nothing.
+function rejectOutliers(poss, period) {
+  if (poss.length < 4) return poss;
+  const m = circMean(poss, period);
+  const dists = poss.map((p) => circDist(p, m, period));
+  const md = median(dists);
+  const mad = median(dists.map((d) => Math.abs(d - md)));
+  const thresh = md + Math.max(3.5 * mad, 2);
+  const kept = poss.filter((_, i) => dists[i] <= thresh);
+  return kept.length ? kept : poss;
+}
+
 /**
- * Fold one head's events onto the cycle and derive its aspect windows.
+ * Fold one head's ONSET events onto the cycle and derive its aspect windows.
+ * Presence events are ignored here (they never define a boundary). Each aspect's
+ * onset is the circular mean of its folded positions after outlier rejection;
+ * an arc to the next onset that breaks the Spanish grammar (e.g. red→amber, with
+ * green unseen) is flagged `nextPartial` so that interval is treated as uncertain
+ * rather than a confidently-held phase.
  * @param {Ev[]} evs
  * @param {number} epoch
  * @param {number} cycleSec
@@ -89,30 +130,38 @@ export function estimateCycleSec(heads) {
  */
 function headWindows(evs, epoch, cycleSec) {
   const cyc = cycleSec * 1000;
-  // fold; group by aspect. Assume each aspect occurs once per cycle, so its
-  // onset = circular mean of all folded positions and jitter = circular spread.
+  const onsetEvs = evs.filter((e) => e.kind !== 'presence');
   const byAspect = {};
-  for (const e of evs) {
+  for (const e of onsetEvs) {
     const pos = ((((e.t - epoch) % cyc) + cyc) % cyc) / 1000;
     (byAspect[e.aspect] ??= []).push(pos);
   }
   const onsets = [];
   let maxSpread = 0;
-  for (const [aspect, poss] of Object.entries(byAspect)) {
-    onsets.push({ pos: round1(circMean(poss, cycleSec)), aspect });
+  for (const [aspect, raw] of Object.entries(byAspect)) {
+    const poss = rejectOutliers(raw, cycleSec);
+    onsets.push({ pos: round1(circMean(poss, cycleSec)), aspect, nextPartial: false });
     maxSpread = Math.max(maxSpread, circSpread(poss, cycleSec));
   }
   onsets.sort((a, b) => a.pos - b.pos);
-  return { headId: evs[0].headId, onsets, maxSpread: round1(maxSpread), samples: evs.length };
+  // Grammar check across adjacent (wrapping) onsets: an illegal step means an
+  // aspect changed unobserved inside that arc.
+  for (let i = 0; i < onsets.length; i++) {
+    const next = onsets[(i + 1) % onsets.length];
+    if (onsets.length > 1 && !isLegalNext(onsets[i].aspect, next.aspect)) onsets[i].nextPartial = true;
+  }
+  const samples = onsetEvs.length;
+  const verdict = samples < MIN_ONSETS_TO_JUDGE ? 'insufficient'
+    : maxSpread > FIXED_CV * cycleSec ? 'actuated' : 'fixed';
+  return { headId: evs[0].headId, onsets, maxSpread: round1(maxSpread), samples, verdict };
 }
 
-/** The aspect a head shows at cycle position `pos`, from its onset windows. */
-function aspectAt(hw, pos, cycleSec) {
-  if (!hw.onsets.length) return 'off';
-  // last onset at or before pos (wrapping)
+/** The aspect a head shows at cycle position `pos` (+ whether that arc is partial). */
+function aspectAt(hw, pos) {
+  if (!hw.onsets.length) return { aspect: 'off', partial: false };
   let chosen = hw.onsets[hw.onsets.length - 1]; // wrap default = the last one
   for (const o of hw.onsets) { if (o.pos <= pos) chosen = o; else break; }
-  return chosen.aspect;
+  return { aspect: chosen.aspect, partial: !!chosen.nextPartial };
 }
 
 /**
@@ -127,45 +176,71 @@ function aspectAt(hw, pos, cycleSec) {
  *   confidence: import('../domain/model.js').Confidence,
  * }}
  */
-export function reconstructPlan(events, allHeadIds = []) {
+export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   if (!events?.length) return null;
-  const heads = byHead(events);
+
+  // Recent-window re-anchor: fold only recent events so a stale epoch or slow
+  // drift can't smear the fold (see the TeslaMate long-span analysis). Falls
+  // back to the full log if the window is too sparse to reconstruct from.
+  let used = events;
+  if (opts.recentWindowMs) {
+    const now = opts.now ?? Math.max(...events.map((e) => e.t));
+    const recent = events.filter((e) => e.t >= now - opts.recentWindowMs);
+    if (recent.length >= 2) used = recent;
+  }
+
+  const heads = byHead(used);
   const cycleLengthSec = estimateCycleSec(heads);
   if (!cycleLengthSec) return null;
-  const epoch = Math.min(...events.map((e) => e.t));
+  const epoch = Math.min(...used.filter((e) => e.kind !== 'presence').map((e) => e.t));
+  if (!Number.isFinite(epoch)) return null;
 
   const hws = Object.values(heads).map((evs) => headWindows(evs, epoch, cycleLengthSec));
   const observedHeads = hws.map((h) => h.headId);
   const missingHeads = allHeadIds.filter((id) => !observedHeads.includes(id));
+  const headVerdicts = Object.fromEntries(hws.map((h) => [h.headId, h.verdict]));
 
   // union of all boundary positions -> phase partition
   const bounds = [...new Set(hws.flatMap((h) => h.onsets.map((o) => o.pos)).map((p) => round1(p)))].sort((a, b) => a - b);
   if (!bounds.length) return null;
   if (bounds[0] > 0) bounds.unshift(0);
 
+  const anyActuated = hws.some((hw) => hw.verdict === 'actuated');
   const phases = [];
+  let impliedGaps = 0;
   for (let i = 0; i < bounds.length; i++) {
     const startSec = bounds[i];
     const endSec = i + 1 < bounds.length ? bounds[i + 1] : cycleLengthSec;
     const mid = (startSec + endSec) / 2;
     const states = {};
-    for (const hw of hws) states[hw.headId] = aspectAt(hw, mid, cycleLengthSec);
-    // a phase is "actuated" if any head bounding it has wide spread
-    const type = hws.some((hw) => hw.maxSpread > FIXED_CV * cycleLengthSec) ? 'actuated' : 'fixed';
-    phases.push({ startSec: round1(startSec), durSec: round1(endSec - startSec), states, type });
+    let partial = false;
+    for (const hw of hws) {
+      const at = aspectAt(hw, mid);
+      states[hw.headId] = at.aspect;
+      if (at.partial) partial = true; // an unobserved transition falls in this arc
+    }
+    if (partial) impliedGaps++;
+    // a phase is "actuated" if any head has wide spread; "partial" if a head's
+    // aspect here is really a guess spanning an unobserved change.
+    phases.push({ startSec: round1(startSec), durSec: round1(endSec - startSec), states, type: anyActuated ? 'actuated' : 'fixed', partial });
   }
 
-  const cyclesObserved = Math.max(1, Math.round(events.length / Math.max(1, hws.reduce((s, h) => s + h.onsets.length, 0))));
-  const fixedHeads = hws.filter((h) => h.maxSpread <= FIXED_CV * cycleLengthSec).length;
-  const timeBasedRatio = hws.length ? fixedHeads / hws.length : 0;
-  const modelable = timeBasedRatio > 0 && cycleLengthSec > 0;
+  const cyclesObserved = Math.max(1, Math.round(used.length / Math.max(1, hws.reduce((s, h) => s + h.onsets.length, 0))));
+  const judgeable = hws.filter((h) => h.verdict !== 'insufficient');
+  const fixedHeads = hws.filter((h) => h.verdict === 'fixed').length;
+  const timeBasedRatio = judgeable.length ? fixedHeads / judgeable.length : 0;
+  const modelable = fixedHeads > 0 && cycleLengthSec > 0;
   const worstSpread = Math.max(0, ...hws.map((h) => h.maxSpread));
+  // `impliedGaps` (an unobserved aspect, e.g. amber never captured) is surfaced
+  // separately and makes those phases uncertain in the predictor; it does not
+  // demote the cycle/offset confidence that linkage keys on.
   const level = timeBasedRatio === 1 && observedHeads.length && cyclesObserved >= 5 && worstSpread <= 2 ? 'high'
     : modelable && cyclesObserved >= 2 ? 'medium' : 'low';
 
   return {
     cycleLengthSec, epoch, phases, headWindows: hws,
-    observedHeads, missingHeads, modelable, timeBasedRatio, cyclesObserved,
+    observedHeads, missingHeads, headVerdicts, impliedGaps,
+    modelable, timeBasedRatio, cyclesObserved,
     confidence: { cycles: cyclesObserved, stdevSec: round1(worstSpread), level },
   };
 }
@@ -188,6 +263,7 @@ export function reconstructionToPlan(rec, meta = {}) {
     stages: rec.phases.map((p, i) => ({
       name: `Phase ${i + 1}`,
       states: p.states,
+      partial: !!p.partial,
       timing: { type: p.type, sec: p.durSec },
     })),
   };

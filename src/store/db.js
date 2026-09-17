@@ -72,6 +72,11 @@ export async function addObservation(obs) {
   return tx(db, 'observations', 'readwrite', (os) => os.add(obs));
 }
 
+export async function deleteObservation(id) {
+  const db = await open();
+  return tx(db, 'observations', 'readwrite', (os) => os.delete(id));
+}
+
 export async function observationsFor(intersectionId) {
   const db = await open();
   return tx(db, 'observations', 'readonly', (os) =>

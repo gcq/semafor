@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reconstructPlan, reconstructionToPlan, estimateCycleSec } from '../src/inference/reconstruct.js';
-import { predictHead } from '../src/predict/state.js';
+import { predictHead, timeToAspect } from '../src/predict/state.js';
 
 // Two-head fixed-time cycle, 90s:
 //  A: green 0-45, amber 45-50, red 50-90
@@ -67,4 +67,84 @@ test('a jittery head is flagged actuated (not fully time-based)', () => {
 
 test('returns null when there is no periodic signal', () => {
   assert.equal(reconstructPlan([{ headId: 'A', aspect: 'green', t: 1000 }], ['A']), null);
+});
+
+// --- gap-robust solver (Stage 1) ---
+
+test('estimateCycleSec recovers the fundamental from missed cycles (integer-multiple gaps)', () => {
+  // green onsets at 0, 90, 270, 360 -> gaps 90, 180, 90 (a cycle was missed once)
+  const evs = [0, 90000, 270000, 360000].map((t) => ({ headId: 'A', aspect: 'green', t }));
+  assert.equal(estimateCycleSec({ A: evs }), 90);
+});
+
+test('presence taps never create a boundary or shift the cycle', () => {
+  const onsets = genEvents(4).filter((e) => e.headId === 'A'); // green/amber/red onsets
+  const withPresence = [...onsets,
+    { headId: 'A', aspect: 'green', t: 12345, kind: 'presence' },
+    { headId: 'A', aspect: 'red', t: 99999, kind: 'presence' }];
+  assert.equal(estimateCycleSec({ A: withPresence }), 90);
+  const rec = reconstructPlan(withPresence, ['A']);
+  assert.equal(rec.cycleLengthSec, 90);
+  // 3 onset aspects -> boundaries {0,45,50} -> 3 phases; presence adds none
+  assert.equal(rec.phases.length, 3);
+});
+
+test('a missed phase is flagged, not fabricated (tap green then red, amber unseen)', () => {
+  const evs = [];
+  for (let c = 0; c < 6; c++) {
+    evs.push({ headId: 'A', aspect: 'green', t: c * 90000 });
+    evs.push({ headId: 'A', aspect: 'red', t: c * 90000 + 50000 }); // amber skipped
+  }
+  const rec = reconstructPlan(evs, ['A']);
+  assert.equal(rec.cycleLengthSec, 90);
+  assert.ok(rec.impliedGaps >= 1); // green->red is illegal in Spain: amber went unseen
+  // the green arc is marked partial (uncertain), the red arc is not
+  const greenPhase = rec.phases.find((p) => p.states.A === 'green');
+  assert.equal(greenPhase.partial, true);
+});
+
+test('a single fat-finger onset does not move a boundary', () => {
+  const evs = genEvents(6).filter((e) => e.headId === 'A');
+  evs.push({ headId: 'A', aspect: 'green', t: 2 * 90000 + 30000 }); // stray green at pos 30
+  const rec = reconstructPlan(evs, ['A']);
+  const green = rec.headWindows.find((h) => h.headId === 'A').onsets.find((o) => o.aspect === 'green');
+  assert.ok(green.pos <= 1, `green onset should stay near 0, got ${green.pos}`);
+});
+
+test('per-head verdicts: fixed, actuated, insufficient', () => {
+  const fixed = reconstructPlan(genEvents(6), ['A', 'B']);
+  assert.equal(fixed.headVerdicts.A, 'fixed');
+  assert.equal(fixed.headVerdicts.B, 'fixed');
+
+  const act = reconstructPlan(genEvents(8, [0, 22, -12, 28, -16, 20, -14, 25]), ['A', 'B']);
+  assert.equal(act.headVerdicts.A, 'actuated');
+
+  // B fixes the cycle; A has only 2 onsets -> can't be judged
+  const evs = [];
+  for (let c = 0; c < 6; c++) evs.push({ headId: 'B', aspect: 'green', t: c * 90000 });
+  evs.push({ headId: 'A', aspect: 'green', t: 1000 }, { headId: 'A', aspect: 'amber', t: 46000 });
+  const rec = reconstructPlan(evs, ['A', 'B']);
+  assert.equal(rec.headVerdicts.A, 'insufficient');
+});
+
+test('timeToAspect gives seconds until a head next turns green', () => {
+  const plan = reconstructionToPlan(reconstructPlan(genEvents(6), ['A', 'B']));
+  const epoch = plan.epoch;
+  // A is green 0-45; at 20s in it's already green
+  assert.deepEqual(timeToAspect(plan, 'A', epoch + 20000, 'green'), { secToAspect: 0, current: true, uncertain: false });
+  // at 60s in, A is red (50-90); next green onset wraps at 90 -> 30s away
+  assert.equal(timeToAspect(plan, 'A', epoch + 60000, 'green').secToAspect, 30);
+  // B is red 0-50; green starts at 50 -> 30s away at 20s in
+  assert.equal(timeToAspect(plan, 'B', epoch + 20000, 'green').secToAspect, 30);
+});
+
+test('recent-window re-anchor folds only recent events', () => {
+  // old drifted junk far in the past + a clean recent run; window keeps the run
+  const old = [{ headId: 'A', aspect: 'green', t: 0 }, { headId: 'A', aspect: 'green', t: 37000 }];
+  const recent = [];
+  const base = 10_000_000;
+  for (let c = 0; c < 6; c++) recent.push({ headId: 'A', aspect: 'green', t: base + c * 90000 });
+  const rec = reconstructPlan([...old, ...recent], ['A'], { recentWindowMs: 700000, now: base + 5 * 90000 });
+  assert.equal(rec.cycleLengthSec, 90);
+  assert.ok(rec.epoch >= base); // re-anchored to the recent run
 });

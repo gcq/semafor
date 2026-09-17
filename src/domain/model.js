@@ -96,12 +96,19 @@ export const ASPECT_INFO = {
 /**
  * An observation: a head changed to `aspect` at time `t`. This is the ground
  * truth phasing is reconstructed from — one tap per real-world color change.
+ *
+ * `kind` distinguishes two very different taps (default 'onset' for back-compat):
+ *   - 'onset'    — the head JUST changed to `aspect` (a boundary; strong signal).
+ *   - 'presence' — the head IS showing `aspect` right now, change unseen (weak:
+ *                  it constrains but never creates a boundary, so confirming the
+ *                  current color mid-phase can't poison the fold).
  * @typedef {Object} Observation
  * @property {string} id            unique (sync merges by union of ids)
  * @property {string} intersectionId
  * @property {string} headId
  * @property {Aspect} aspect
  * @property {number} t
+ * @property {'onset'|'presence'} [kind]
  * @property {GeoPoint} [where]
  * @property {number} [heading]
  */
