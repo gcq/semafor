@@ -133,6 +133,11 @@
     footer { display: flex; gap: 8px; padding: 12px 0; }
     footer .btn { flex: 1; font-size: 13px; padding: 10px; }
     .hint { color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
+    .update-banner {
+      position: fixed; left: 16px; right: 16px; bottom: calc(12px + var(--safe-b)); z-index: 1000;
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px;
+      background: var(--panel); border: 1px solid var(--accent); box-shadow: 0 6px 24px #0005; font-weight: 600;
+    }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -140,6 +145,11 @@
   <header>
     <div><h1>ONDA</h1><div class="sub" id="gps-sub">locating…</div></div>
   </header>
+  <div id="update-banner" class="update-banner" role="status" hidden>
+    <span style="flex:1">New version available</span>
+    <button id="update-reload" class="sbtn primary">Reload</button>
+    <button id="update-dismiss" class="sbtn" aria-label="Dismiss">✕</button>
+  </div>
   <nav class="tabs" style="grid-template-columns:repeat(5,1fr)">
     <button id="tab-live" aria-selected="true">Live</button>
     <button id="tab-capture" aria-selected="false">Capture</button>
@@ -193,6 +203,7 @@
     </section>
   </main>
 
+  <script src="src/version.js"></script>
   <script type="module" src="src/ui/app.js"></script>
 </body>
 </html>

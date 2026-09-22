@@ -54,20 +54,30 @@ const state = {
   safe('render', tick);
 })();
 
-// Register the worker so updates land on a normal reload:
+// Service worker: offline cache + update checks. No automatic reloads (they
+// could hit mid-drive and drop an open sync room or capture): when the server
+// has a newer version than the one running, show a "Reload" bar instead.
 //  - updateViaCache:'none' → the browser never HTTP-caches sw.js (GitHub Pages
-//    sets max-age=600 which otherwise pins the old worker for 10 min);
-//  - reg.update() on load forces an immediate check;
-//  - a one-shot reload when a new worker takes control pulls the fresh assets.
+//    sets max-age=600 on everything);
+//  - the version lives in src/version.js; comparing the server's copy with the
+//    one this page loaded means we never prompt for a version you already run.
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
+  let reg = null;
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-    .then((reg) => { reg.update().catch(() => {}); })
-    .catch(() => {});
-  let reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloaded) return; reloaded = true; location.reload();
-  });
+    .then((r) => { reg = r; }).catch(() => {});
+  const check = () => { reg?.update().catch(() => {}); checkForUpdate(); };
+  setTimeout(check, 3000);
+  setInterval(check, 10 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+}
+
+async function checkForUpdate() {
+  try {
+    const text = await (await fetch('src/version.js', { cache: 'no-cache' })).text();
+    const latest = /ONDA_VERSION\s*=\s*'([^']+)'/.exec(text)?.[1];
+    if (latest && latest !== self.ONDA_VERSION) $('update-banner').hidden = false;
+  } catch { /* offline: nothing to offer */ }
 }
 
 // ---------- gps ----------
@@ -407,6 +417,8 @@ function wireUi() {
   $('tab-analyze').onclick = () => showView('analyze');
   $('tab-sync').onclick = () => showView('sync');
   $('live-scene').addEventListener('click', onSceneClick);
+  $('update-reload').onclick = () => location.reload();
+  $('update-dismiss').onclick = () => { $('update-banner').hidden = true; };
 }
 
 // Reload the intersection set from the store and refresh every view.
