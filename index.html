@@ -188,10 +188,11 @@
     </section>
 
     <section id="view-capture" class="view">
-      <div class="cap-target">Intersection: <b id="cap-name">—</b></div>
+      <div class="field" style="margin:8px 0"><label>Intersection</label>
+        <select id="cap-ix"></select></div>
       <div class="field" style="margin:8px 0"><label>Watching light</label>
         <select id="cap-head"></select></div>
-      <p class="hint" style="margin-top:0">Tap the color the light shows <b>now</b>, and again on every change. Each tap is timestamped.</p>
+      <p class="hint" style="margin-top:0">Tap the color the light shows <b>now</b>, then again the instant it changes. The first tap only records what it shows; each change after that marks a boundary.</p>
       <div class="cap-buttons" id="cap-buttons" style="grid-template-columns:repeat(2,1fr)"></div>
       <div class="cap-log" id="cap-log"></div>
     </section>

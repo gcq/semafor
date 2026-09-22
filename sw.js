@@ -1,6 +1,6 @@
 // Minimal offline cache. Onda has no backend, so caching the shell is enough to
 // make it work with no signal — which is the whole point in a moving car.
-const CACHE = 'onda-v23';
+const CACHE = 'onda-v24';
 const ASSETS = [
   '.', 'index.html', 'manifest.webmanifest',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',

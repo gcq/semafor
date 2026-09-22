@@ -92,3 +92,26 @@ export function pickApproach(ix, heading) {
     angularDiff(a.bearing, heading) < angularDiff(best.bearing, heading) ? a : best,
   );
 }
+
+/**
+ * The head facing you as you approach `ix` travelling on `approachBearing`.
+ * Spanish lights are near-side (before the stop line), so the mast that faces
+ * you sits on the side of the junction you are coming FROM: its bearing from the
+ * centre is ≈ approachBearing + 180. Returns that mast's first head, or null if
+ * no mast is within `tolDeg` (or masts lack positions).
+ * @param {Intersection} ix
+ * @param {number|null} approachBearing  deg, direction of travel toward the junction
+ * @param {number} [tolDeg=60]
+ * @returns {string|null} headId
+ */
+export function headForApproach(ix, approachBearing, tolDeg = 60) {
+  if (approachBearing == null || !ix?.location) return null;
+  const want = (approachBearing + 180) % 360;
+  let best = null, bestD = Infinity;
+  for (const m of ix.masts ?? []) {
+    if (!m.pos || !m.headIds?.length) continue;
+    const d = angularDiff(bearingDeg(ix.location, m.pos), want);
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  return best && bestD <= tolDeg ? best.headIds[0] : null;
+}

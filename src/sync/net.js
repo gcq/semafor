@@ -10,7 +10,7 @@
 import { mergeBundles } from './merge.js';
 
 const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm';
-export const SYNC_BUILD = 'b22'; // shown in the UI to confirm both devices run the same build
+export const SYNC_BUILD = 'b24'; // shown in the UI to confirm both devices run the same build
 const PEER_TIMEOUT_MS = 25000;
 
 // Public STUN + free public TURN so the WebRTC media path can form across NATs.

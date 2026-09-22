@@ -36,7 +36,6 @@ function render(state = {}) {
       </div>
       <div id="sync-file-status" class="muted-note" style="margin-top:8px"></div>
     </div>`;
-  el = null;
 }
 
 function idleHtml() {

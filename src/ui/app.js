@@ -3,7 +3,7 @@
 
 import * as store from '../store/db.js';
 import { predictIntersection, activePlan, predictHead, timeToAspect } from '../predict/state.js';
-import { rankNext, bearingDeg } from '../nav/proximity.js';
+import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
 import { reconstructPlan, reconstructionToPlan } from '../inference/reconstruct.js';
 import { uid } from '../domain/model.js';
 import { drawScene } from './live-scene.js';
@@ -31,6 +31,7 @@ const state = {
   live: { ixId: null, plan: null, rec: null }, // live reconstruction cache
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
+  lastTap: {},             // headId -> { aspect, t } of your last tap (onset vs presence)
 };
 
 // ---------- boot ----------
@@ -39,13 +40,16 @@ const state = {
   state.selectedId = store.getPref('selectedId', null);
   startGps();
   wireUi();
-  mountEditor(document.getElementById('editor-root'), editorApi());
-  mountAnalyze(document.getElementById('analyze-root'), analyzeApi());
-  mountSync(document.getElementById('sync-root'), syncApi());
-  if (autoJoinFromUrl()) showView('sync');
-  tick();
-  setInterval(tick, 250);
+  // A bug in one tab must never stop boot: a throw here used to skip the render
+  // loop entirely (blank Live view) and the SW registration (no self-update).
+  const safe = (name, fn) => { try { fn(); } catch (e) { console.error(`${name} failed to mount`, e); } };
+  safe('editor', () => mountEditor(document.getElementById('editor-root'), editorApi()));
+  safe('analyze', () => mountAnalyze(document.getElementById('analyze-root'), analyzeApi()));
+  safe('sync', () => mountSync(document.getElementById('sync-root'), syncApi()));
   registerSW();
+  safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
+  setInterval(() => safe('render', tick), 250);
+  safe('render', tick);
 })();
 
 // Register the worker so updates land on a normal reload:
@@ -122,16 +126,31 @@ async function refreshLiveModel(ix) {
   } catch { if (state.live.ixId === ixId) state.live = { ixId, plan: null, rec: null }; }
 }
 
+// Live reconstruction first; else a saved plan — but only one that actually
+// predicts these heads (legacy plans keyed by movement id predict nothing and
+// would show a bogus "Off").
 function livePlanFor(ix, now) {
   if (state.live.ixId === ix.id && state.live.plan) return state.live.plan;
-  return activePlan(ix.plans, now);
+  const p = activePlan(ix.plans, now);
+  const ids = new Set(headsOf(ix).map((h) => h.id));
+  return p?.stages?.some((st) => Object.keys(st.states ?? {}).some((k) => ids.has(k))) ? p : null;
 }
 
-// Head to predict + capture: a pole you tapped, else the approaching movement's
-// head, else the first head.
+// Direction you're approaching the junction from. The bearing from you to its
+// centre is right even when stopped (GPS course is null then), so prefer it until
+// you're basically in the box; fall back to the live/frozen course.
+function approachBearing(ix) {
+  if (state.pos && distanceM(state.pos, ix.location) > 8) return bearingDeg(state.pos, ix.location);
+  return state.heading ?? state.headingFrozen;
+}
+
+// Head to predict + capture: a pole you tapped, else the head facing your
+// approach (near-side mast), else the first head.
 function resolveActiveHead(ix, heads) {
   if (!heads.length) return null;
   if (state.sceneHead?.ixId === ix.id) { const h = heads.find((x) => x.id === state.sceneHead.id); if (h) return h; }
+  const facing = headForApproach(ix, approachBearing(ix));
+  if (facing) { const h = heads.find((x) => x.id === facing); if (h) return h; }
   const mv = ix.movements?.find((m) => !m.unsignalized && m.headId);
   if (mv?.headId) { const h = heads.find((x) => x.id === mv.headId); if (h) return h; }
   return heads[0];
@@ -150,9 +169,9 @@ function renderLive(ix) {
   // scene
   const aspectOf = (hid) => (plan ? (predictHead(plan, hid, now)?.aspect ?? 'off') : 'off');
   const ego = state.pos;
-  const upDeg = state.heading ?? state.headingFrozen ?? (ego ? bearingDeg(ego, ix.location) : 0);
+  const upDeg = approachBearing(ix) ?? 0;
   const canvas = $('live-scene');
-  if (canvas) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
+  if (canvas && canvas.clientWidth) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
 
   renderCountdown(plan, active, now);
   renderLiveMeta(ix, plan, active);
@@ -293,42 +312,80 @@ function headsOf(ix) {
 
 function renderCapture() {
   const ix = currentIntersection();
-  $('cap-name').textContent = ix?.name ?? '—';
+
+  // Selects/buttons are rebuilt only when their content changes, and never while
+  // focused: rebuilding every 250ms tick closed the native picker as you opened it.
+  const ixSel = $('cap-ix');
+  const ixKey = `${state.intersections.map((i) => i.id + ':' + i.name).join('|')}#${state.selectedId ?? ''}#${ix?.id ?? ''}`;
+  if (ixSel.dataset.key !== ixKey && document.activeElement !== ixSel) {
+    ixSel.dataset.key = ixKey;
+    const auto = `Auto — nearest by GPS${!state.selectedId && ix ? ` (${ix.name})` : ''}`;
+    ixSel.innerHTML = `<option value="">${esc(auto)}</option>`
+      + state.intersections.map((i) => `<option value="${i.id}" ${i.id === state.selectedId ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
+    ixSel.onchange = () => { state.selectedId = ixSel.value || null; store.setPref('selectedId', state.selectedId); tick(); };
+  }
+
   const heads = ix ? headsOf(ix) : [];
   const sel = $('cap-head');
-
+  const box = $('cap-buttons');
   if (!heads.length) {
-    sel.innerHTML = '<option>—</option>';
-    $('cap-buttons').innerHTML = '<p class="hint">Add signalized movements/heads in the Edit tab first.</p>';
+    if (sel.dataset.key !== 'none') {
+      sel.dataset.key = 'none'; box.dataset.key = 'none';
+      sel.innerHTML = '<option>—</option>';
+      box.innerHTML = '<p class="hint">Add signalized movements/heads in the Edit tab first.</p>';
+    }
   } else {
     if (state.captureHead?.ixId !== ix.id || !heads.find((h) => h.id === state.captureHead?.id))
       state.captureHead = { ixId: ix.id, id: heads[0].id };
-    sel.innerHTML = heads.map((h) => `<option value="${h.id}" ${h.id === state.captureHead.id ? 'selected' : ''}>${esc(h.label)}</option>`).join('');
-    sel.onchange = () => { state.captureHead = { ixId: ix.id, id: sel.value }; };
-    const box = $('cap-buttons');
-    box.innerHTML = colorButtonsHtml(false);
-    box.querySelectorAll('.cap').forEach((b) => b.onclick = () => logAspect(ix.id, state.captureHead.id, b.dataset.aspect));
+    const headKey = `${ix.id}#${heads.map((h) => h.id + ':' + h.label).join('|')}#${state.captureHead.id}`;
+    if (sel.dataset.key !== headKey && document.activeElement !== sel) {
+      sel.dataset.key = headKey;
+      sel.innerHTML = heads.map((h) => `<option value="${h.id}" ${h.id === state.captureHead.id ? 'selected' : ''}>${esc(h.label)}</option>`).join('');
+      sel.onchange = () => { state.captureHead = { ixId: ix.id, id: sel.value }; };
+    }
+    if (box.dataset.key !== ix.id) {
+      box.dataset.key = ix.id;
+      box.innerHTML = colorButtonsHtml(false);
+      box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, state.captureHead.id, b.dataset.aspect)));
+    }
   }
 
-  $('cap-log').innerHTML = state.captureLog.slice(-12).reverse()
-    .map((l) => `<div>${new Date(l.t).toLocaleTimeString()} · <b>${esc(l.aspect)}</b> · ${esc(l.head)} @ ${esc(l.ix)}</div>`).join('');
+  const log = $('cap-log');
+  const logKey = String(state.captureLog.length);
+  if (log.dataset.key !== logKey) {
+    log.dataset.key = logKey;
+    log.innerHTML = state.captureLog.slice(-12).reverse()
+      .map((l) => `<div>${new Date(l.t).toLocaleTimeString()} · <b>${esc(l.aspect)}</b> · ${esc(l.head)} @ ${esc(l.ix)}</div>`).join('');
+  }
+}
+
+// Is this tap a boundary (onset) or just "it's showing X" (presence)? Only an
+// onset if there's evidence the head was showing something else a moment ago:
+// your previous tap on it (within a max cycle) was a different color, or — with
+// no recent tap — the model says it was showing another color (the re-anchor
+// case). With neither, it's presence: the first "what it shows now" tap of a
+// learning session must never plant a false boundary.
+const TAP_MEMORY_MS = 200000;
+function tapKind(ix, headId, aspect, now) {
+  const last = state.lastTap[headId];
+  if (last && now - last.t <= TAP_MEMORY_MS) return last.aspect === aspect ? 'presence' : 'onset';
+  const plan = livePlanFor(ix, now);
+  const cur = plan ? predictHead(plan, headId, now)?.aspect : null;
+  return cur && cur !== aspect ? 'onset' : 'presence';
 }
 
 // Append one aspect observation for a head. `kind` (onset|presence) is inferred
 // from whether the tapped color matches what the model currently shows.
 async function logAspect(intersectionId, headId, aspect, kind) {
   const ix = state.intersections.find((i) => i.id === intersectionId); if (!ix || !headId) return;
-  if (!kind) {
-    const plan = livePlanFor(ix, Date.now());
-    const cur = plan ? predictHead(plan, headId, Date.now())?.aspect : null;
-    kind = cur && cur === aspect ? 'presence' : 'onset';
-  }
+  if (!kind) kind = tapKind(ix, headId, aspect, Date.now());
   const ev = {
     id: uid('obs'), intersectionId, headId, aspect, kind, t: Date.now(),
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
   state.lastObs = { id: ev.id, ixId: intersectionId };
+  state.lastTap[headId] = { aspect, t: ev.t };
   const head = headsOf(ix).find((h) => h.id === headId);
   state.captureLog.push({ t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
