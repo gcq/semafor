@@ -131,7 +131,7 @@ test('timeToAspect gives seconds until a head next turns green', () => {
   const plan = reconstructionToPlan(reconstructPlan(genEvents(6), ['A', 'B']));
   const epoch = plan.epoch;
   // A is green 0-45; at 20s in it's already green
-  assert.deepEqual(timeToAspect(plan, 'A', epoch + 20000, 'green'), { secToAspect: 0, current: true, uncertain: false, range: null });
+  assert.deepEqual(timeToAspect(plan, 'A', epoch + 20000, 'green'), { secToAspect: 0, current: true, unpredictable: false });
   // at 60s in, A is red (50-90); next green onset wraps at 90 -> 30s away
   assert.equal(timeToAspect(plan, 'A', epoch + 60000, 'green').secToAspect, 30);
   // B is red 0-50; green starts at 50 -> 30s away at 20s in
@@ -156,16 +156,18 @@ test('countdown runs to the head\'s own color change, across other heads\' bound
   assert.equal(predictHead(plan, 'B', plan.epoch + 20000).secToChange, 30); // red 0-50 spans the 45 boundary
 });
 
-test('a fixed head keeps an exact countdown next to an actuated one; actuated gets a range', () => {
+test('actuated heads are never predicted; a fixed head next to one stays exact', () => {
   const rec = reconstructPlan(genEvents(8, [0, 22, -12, 28, -16, 20, -14, 25]), ['A', 'B']);
   const plan = reconstructionToPlan(rec);
-  // find a moment where B is red and A is green
-  const tB = plan.epoch + 10000;
-  const b = predictHead(plan, 'B', tB);
-  assert.equal(b.uncertain, false);            // B's own boundaries are tight
-  assert.equal(b.range, null);
-  const a = predictHead(plan, 'A', tB);         // A green, ends at its wandering amber
-  assert.equal(a.aspect, 'green');
-  assert.equal(a.uncertain, true);
-  assert.ok(Array.isArray(a.range) && a.range[1] - a.range[0] >= 10, `range ${a.range}`);
+  assert.deepEqual(plan.unpredictableHeads, ['A']);
+  const t = plan.epoch + 10000;                  // B red (0-50), A green
+  const b = predictHead(plan, 'B', t);
+  assert.equal(b.unpredictable, false);
+  assert.equal(b.uncertain, false);
+  assert.equal(b.secToChange, 40);              // exact: to B's green at 50
+  assert.equal(timeToAspect(plan, 'B', t, 'green').secToAspect, 40);
+  const a = predictHead(plan, 'A', t);
+  assert.equal(a.unpredictable, true);
+  assert.equal(a.secToChange, null);
+  assert.equal(timeToAspect(plan, 'A', t + 50000, 'green').unpredictable, true);
 });

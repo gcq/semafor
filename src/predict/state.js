@@ -35,20 +35,23 @@ export function cycleTimeMs(plan, now) {
 
 /**
  * @typedef {Object} Prediction
- * @property {import('../domain/model.js').Aspect} aspect
+ * @property {import('../domain/model.js').Aspect|null} aspect  null = not predicted (actuated)
  * @property {string} color
  * @property {boolean} go
- * @property {number} secToChange
- * @property {[number,number]|null} range
- * @property {boolean} uncertain
- * @property {import('../domain/model.js').Aspect} next
+ * @property {number|null} secToChange   null when unpredictable
+ * @property {boolean} uncertain          an unobserved aspect makes this arc a guess
+ * @property {boolean} unpredictable      actuated head: no prediction offered
+ * @property {import('../domain/model.js').Aspect|null} next
  * @property {number} phaseIndex
  */
 
-// A phase's timing describes its END boundary: `type` says whether that
-// boundary is fixed or actuated, and for actuated ones `min`/`max` bound the
-// phase's duration (i.e. when the boundary can fall).
-const endsActuated = (ph) => ph.timing?.type === 'actuated';
+// Actuated lights are not predicted: their timing depends on live detector
+// demand, so the error compounds cycle after cycle and within a few cycles any
+// "green in T" is noise. Reconstructed plans name those heads explicitly;
+// older/imported plans (e.g. from the TeslaMate tool) mark phases instead, so
+// for them the boundary you're waiting for being actuated means "don't predict".
+const unpredictable = (plan, headId, endPhase) =>
+  plan.unpredictableHeads ? plan.unpredictableHeads.includes(headId) : endPhase?.timing?.type === 'actuated';
 // Is this head's aspect in this phase a guess spanning an unobserved change?
 const partialFor = (ph, headId) => (ph.partialHeads ? ph.partialHeads.includes(headId) : !!ph.partial);
 
@@ -61,24 +64,15 @@ function locate(phases, t) {
   return { idx: 0, elapsed: 0 };
 }
 
-// Seconds from now until the boundary at the END of phase `endIdx` (walking
-// forward from the current phase), plus its range if that boundary is actuated.
-// Only the boundary you're waiting for matters: jitter of other heads'
-// boundaries in between doesn't move it (positions are cycle-relative), so a
-// fixed head at a junction with an actuated one still gets an exact countdown.
-function arrival(phases, idx, elapsed, steps) {
+// Seconds from now to the END of the phase `steps` phases ahead. Positions are
+// cycle-relative, so other heads' boundaries in between don't move it.
+function secondsUntilEnd(phases, idx, elapsed, steps) {
   let total = phases[idx].timing.sec - elapsed;
-  let end = idx;
-  for (let s = 1; s <= steps; s++) { end = (idx + s) % phases.length; total += phases[end].timing.sec; }
-  const ph = phases[end];
-  let range = null;
-  if (endsActuated(ph)) {
-    const lo = total + ((ph.timing.min ?? ph.timing.sec) - ph.timing.sec);
-    const hi = total + ((ph.timing.max ?? ph.timing.sec) - ph.timing.sec);
-    range = [Math.max(0, Math.round(lo)), Math.max(0, Math.round(hi))];
-  }
-  return { sec: Math.max(0, total), range, actuated: endsActuated(ph) };
+  for (let s = 1; s <= steps; s++) total += phases[(idx + s) % phases.length].timing.sec;
+  return Math.max(0, total);
 }
+
+const NOT_PREDICTED = { aspect: null, color: 'dark', go: false, secToChange: null, uncertain: true, unpredictable: true, next: null };
 
 /**
  * Predict a head's aspect at `now`, and how long until IT changes color (not
@@ -99,15 +93,14 @@ export function predictHead(plan, headId, now) {
   // walk until the head's aspect differs (at most one full cycle)
   let steps = 0;
   while (steps < phases.length - 1 && aspectAt((idx + steps + 1) % phases.length) === aspect) steps++;
-  const next = aspectAt((idx + steps + 1) % phases.length);
-  const a = arrival(phases, idx, elapsed, steps);
+  if (unpredictable(plan, headId, phases[(idx + steps) % phases.length])) return { ...NOT_PREDICTED, phaseIndex: idx };
 
   const info = ASPECT_INFO[aspect] ?? ASPECT_INFO.off;
   return {
     aspect, color: info.color, go: info.go,
-    secToChange: Math.round(a.sec), range: a.range,
-    uncertain: a.actuated || partialFor(phases[idx], headId),
-    next, phaseIndex: idx,
+    secToChange: Math.round(secondsUntilEnd(phases, idx, elapsed, steps)),
+    uncertain: partialFor(phases[idx], headId), unpredictable: false,
+    next: aspectAt((idx + steps + 1) % phases.length), phaseIndex: idx,
   };
 }
 
@@ -116,12 +109,11 @@ export function predictHead(plan, headId, now) {
  * from `now`. This is the "green in T seconds" horizon the Live view needs. If
  * the head is already showing the target, secToAspect is 0 (see predictHead for
  * how long it lasts). Returns null if the plan never shows that aspect for it.
- * `range` is set when that onset is an actuated boundary.
  * @param {TimingPlan} plan
  * @param {string} headId
  * @param {number} now
  * @param {import('../domain/model.js').Aspect} targetAspect
- * @returns {{ secToAspect: number, current: boolean, uncertain: boolean, range: [number,number]|null }|null}
+ * @returns {{ secToAspect: number|null, current: boolean, unpredictable: boolean }|null}
  */
 export function timeToAspect(plan, headId, now, targetAspect = 'green') {
   if (!plan?.stages?.length) return null;
@@ -129,14 +121,15 @@ export function timeToAspect(plan, headId, now, targetAspect = 'green') {
   const aspectAt = (i) => phases[i].states[headId] ?? 'off';
   if (!phases.some((_, i) => aspectAt(i) === targetAspect)) return null;
   const { idx, elapsed } = locate(phases, cycleTimeMs(plan, now) / 1000);
-  if (aspectAt(idx) === targetAspect) return { secToAspect: 0, current: true, uncertain: false, range: null };
+  if (plan.unpredictableHeads?.includes(headId)) return { secToAspect: null, current: false, unpredictable: true };
+  if (aspectAt(idx) === targetAspect) return { secToAspect: 0, current: true, unpredictable: false };
 
   // the target begins at the start of phase j = the end of phase j-1
   for (let steps = 0; steps < phases.length; steps++) {
     const j = (idx + steps + 1) % phases.length;
     if (aspectAt(j) === targetAspect) {
-      const a = arrival(phases, idx, elapsed, steps);
-      return { secToAspect: Math.round(a.sec), current: false, uncertain: a.actuated, range: a.range };
+      if (unpredictable(plan, headId, phases[(idx + steps) % phases.length])) return { secToAspect: null, current: false, unpredictable: true };
+      return { secToAspect: Math.round(secondsUntilEnd(phases, idx, elapsed, steps)), current: false, unpredictable: false };
     }
   }
   return null;

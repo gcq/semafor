@@ -58,7 +58,7 @@ export const ASPECT_INFO = {
  * @property {string} [headId]     which head controls it
  */
 
-/** @typedef {{ type: 'fixed'|'actuated', sec: number, min?: number, max?: number }} PhaseTiming */
+/** @typedef {{ type: 'fixed'|'actuated', sec: number }} PhaseTiming  type describes the boundary that ENDS the phase */
 
 /**
  * A reconstructed phase: each head's aspect, held for a duration. Derived from
@@ -82,6 +82,7 @@ export const ASPECT_INFO = {
  * @property {Phase[]} stages
  * @property {number} [cycleLengthMs]
  * @property {Confidence} [confidence]
+ * @property {string[]} [unpredictableHeads]  actuated heads: never predicted
  */
 
 /**
@@ -122,8 +123,8 @@ export const ASPECT_INFO = {
  * @property {Head[]} heads
  * @property {Movement[]} movements
  * @property {Mast[]} masts
- * @property {TimingPlan[]} plans      reconstructed; may be empty until observed
- * @property {string} [corridorId]
+ * @property {TimingPlan[]} plans      imported fallback only (e.g. TeslaMate); the live model is
+ *                                     always reconstructed from observations, never saved
  * @property {number} createdAt
  * @property {number} updatedAt
  * @property {number} rev              monotonic edit counter (sync compares this)
@@ -145,7 +146,6 @@ export function makeIntersection(init = {}) {
     movements: init.movements ?? [],
     masts: init.masts ?? [],
     plans: init.plans ?? [],
-    corridorId: init.corridorId,
     createdAt: init.createdAt ?? now,
     updatedAt: now,
     rev: init.rev ?? 0,

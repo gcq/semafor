@@ -39,7 +39,7 @@ function loadDraft() {
 
 const armName = (id) => draft.arms.find((a) => a.id === id)?.name || id;
 const headIds = () => [...new Set(draft.movements.filter((m) => !m.unsignalized && m.headId).map((m) => m.headId))];
-const plan = () => draft.plans?.[0] ?? null;
+const plan = () => (draft ? ctx.api.model(draft.id) : null); // the auto-rebuilt model, never a saved copy
 const round6 = (x) => Math.round(x * 1e6) / 1e6;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -147,7 +147,7 @@ function rerender() {
       <button class="sbtn" data-act="phase-prev">◀</button>
       <span style="min-width:80px;text-align:center;font-weight:600">${previewPhase + 1}/${N}</span>
       <button class="sbtn" data-act="phase-next">▶</button>
-    </div>` : '<div class="ed-section"><p class="muted-note">No phasing yet — capture observations, then Analyze reconstructs it. Heads show grey until then.</p></div>'}
+    </div>` : '<div class="ed-section"><p class="muted-note">No phasing yet — capture a few cycles of taps and it’s rebuilt automatically. Heads show grey until then.</p></div>'}
 
     <div class="ed-section">
       <div class="field"><label>Editing</label>

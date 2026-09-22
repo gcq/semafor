@@ -15,7 +15,6 @@ This single distinction drives everything:
 
 - **Fixed-time signals** → exact countdown to the next change.
 - **Actuated signals** → honest "green for ~8–45s" ranges, clearly flagged.
-- **Linkage between intersections** → falls out automatically: two intersections are *coordinated* (a green wave) when they share a cycle length and a **stable offset** between their clocks. A wandering offset means they're independent / free-running. You never draw these links by hand — the tool infers them.
 
 Prior art that validates the approach: MIT/Princeton's [SignalGuru](https://mrmgroup.cs.princeton.edu/papers/Koukoumidis_SignalGuru_MobiSys_2011.pdf) (same idea, 2011: ~0.66s prediction error for pretimed, ~2.45s for actuated), the [Open Traffic Lights](https://brechtvdv.github.io/Article-Open-Traffic-Lights/) SPaT/MAP ontology, and the dormant [OSM Traffic Signal Timings](https://wiki.openstreetmap.org/wiki/Proposed_features/Traffic_Signal_Timings) tagging proposal (a future export target).
 
@@ -31,9 +30,8 @@ Terms follow SAE J2735 so exports can interoperate, but the model shape is our o
 | **Approach** | direction you're *travelling* as you arrive (a bearing) | ingress |
 | **Stage** | one step of the cycle: states held for a duration | phase interval |
 | **Timing plan** | cycle behaviour for a time window (rush/off-peak/night) | signal timing plan |
-| **Corridor** | inferred set of coordinated intersections | — |
 
-The source of truth is the **controller cycle**, not the individual light. Each signal group's timeline is *derived* from the ordered stages — so lights within an intersection are correlated for free, and cross-intersection linkage is just an offset between two controller clocks.
+The source of truth is the **controller cycle**, not the individual light. Each signal group's timeline is *derived* from the ordered stages — so lights within an intersection are correlated for free.
 
 ## Architecture
 
@@ -43,7 +41,6 @@ Zero dependencies, no build step. Pure ES modules; the intelligent core never to
 index.html            app shell (dark/light follows the browser)
 manifest.webmanifest  PWA install
 sw.js                 offline cache (cache-first, own-origin)
-data/sample.json      demo intersections (a Buenos Aires corridor)
 src/
   domain/
     indications.js    the driver-facing states + SPaT names + colors
@@ -54,14 +51,12 @@ src/
     proximity.js      GPS -> forward-cone -> ETA ranking        (pure)
   inference/
     cycle.js          observations -> cycle/splits, fixed-vs-actuated (pure)
-    linkage.js        cross-intersection coordination detection  (pure)
   store/
     db.js             IndexedDB (intersections + observation log) + JSON import/export
   ui/
     app.js            thin glue: reads the core, paints the DOM on a timer
 test/
     core.test.js      predictor + inference + nav
-    linkage.test.js   coordination detection
 ```
 
 Two UI modes, matching the two contexts:
@@ -91,11 +86,10 @@ docker run --rm -v "$PWD":/app -w /app node:22-alpine node --test
 
 ## Roadmap
 
-1. ✅ Pure core: predictor, cycle inference (fixed/actuated), proximity, linkage — all tested.
+1. ✅ Pure core: predictor, cycle inference (fixed/actuated), proximity — all tested. Actuated lights are detected but deliberately not predicted.
 2. ✅ Runnable shell: Live + Capture, IndexedDB, import/export, PWA/offline, sample data.
 3. ✅ Characterization in the UI (Analyze tab): observation log → draft plan with "N cycles, confidence" + per-stage fixed/sensor tags; accept as active plan.
 4. ✅ Timeline editor (Edit tab): full CRUD on signal groups, approaches, and stages (duration, per-group indication, fixed/actuated), plus "start now" to pin the cycle to real time.
-5. ✅ Coordination detection surfaced (Analyze tab): corridors + pairwise linked/independent verdicts with confidence.
 6. Time-of-day plans (rush/off-peak/night-flash) — model supports multiple plans + schedules; editor currently edits the active plan only.
 7. Green-wave visualization (time-space diagram) — needs visual iteration.
 8. (Later, explicitly deferred) Interoperable export — SPaT/MAP JSON, GeoJSON, OSM timing relations. Not now.

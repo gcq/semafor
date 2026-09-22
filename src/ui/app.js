@@ -4,7 +4,7 @@
 import * as store from '../store/db.js';
 import { activePlan, predictHead, timeToAspect } from '../predict/state.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
-import { reconstructPlan, reconstructionToPlan } from '../inference/reconstruct.js';
+import { characterizeIntersection } from '../inference/characterize.js';
 import { uid } from '../domain/model.js';
 import { mergeBundles } from '../sync/merge.js';
 import { drawScene } from './live-scene.js';
@@ -13,9 +13,6 @@ import { mountAnalyze, refreshAnalyze } from './analyze.js';
 import { mountSync, autoJoinFromUrl } from './sync.js';
 
 const ASPECT_LABEL = { green: 'Green', 'flash-amber': 'Flashing amber', amber: 'Amber', red: 'Red', off: 'Off' };
-// Live re-anchor window: fold recent taps so the current session's cycle/phase
-// dominate any older, drifted observations (see the TeslaMate long-span finding).
-const LIVE_WINDOW_MS = 6 * 3600 * 1000;
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -29,7 +26,8 @@ const state = {
   captureHead: null,       // { ixId, id } head being watched in Capture
   captureLog: [],
   sceneHead: null,         // { ixId, id } head made active by tapping its pole
-  live: { ixId: null, plan: null, rec: null }, // live reconstruction cache
+  models: {},              // ixId -> { rec, plan }: the model every view uses (rebuilt, never saved)
+  lastIxId: null,          // to reset the manual head pick when the intersection changes
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
   lastTap: {},             // headId -> { aspect, t } of your last tap (onset vs presence)
@@ -48,6 +46,8 @@ const state = {
   safe('analyze', () => mountAnalyze(document.getElementById('analyze-root'), analyzeApi()));
   safe('sync', () => mountSync(document.getElementById('sync-root'), syncApi()));
   registerSW();
+  await refreshAllModels();
+  setInterval(refreshAllModels, 60000); // the recent window slides with the clock
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
@@ -107,31 +107,35 @@ function recomputeRanking() {
 function tick() {
   recomputeRanking();
   const ix = currentIntersection();
-  // On changing intersection, drop the manual head pick and refresh the live
-  // reconstruction (async; the render below uses whatever's cached meanwhile).
-  if (ix && state.live.ixId !== ix.id) { state.sceneHead = null; refreshLiveModel(ix); }
+  if (ix && ix.id !== state.lastIxId) { state.sceneHead = null; state.lastIxId = ix.id; }
   renderLive(ix);
   renderCapture();
 }
 
-// Reconstruct a live plan from this intersection's observations (recent-window
-// re-anchored) so predictions update as you tap — this is the per-session anchor.
-async function refreshLiveModel(ix) {
-  const ixId = ix.id;
-  state.live.ixId = ixId; // claim now so tick() doesn't re-fire every frame
-  try {
-    const obs = await store.observationsFor(ixId);
-    const rec = reconstructPlan(obs, headsOf(ix).map((h) => h.id), { recentWindowMs: LIVE_WINDOW_MS, now: Date.now() });
-    if (state.live.ixId !== ixId) return; // switched away during the await
-    state.live = { ixId, plan: rec ? reconstructionToPlan(rec) : null, rec };
-  } catch { if (state.live.ixId === ixId) state.live = { ixId, plan: null, rec: null }; }
+// Rebuild one intersection's model from its observations — after a tap/undo
+// this is the per-session re-anchor. Nothing is ever "saved": the model is a
+// pure function of the observation log.
+async function refreshModel(ix) {
+  try { state.models[ix.id] = characterizeIntersection(ix, await store.observationsFor(ix.id), Date.now()); }
+  catch (e) { console.error('model failed for', ix.name, e); }
 }
 
-// Live reconstruction first; else a saved plan — but only one that actually
-// predicts these heads (legacy plans keyed by movement id predict nothing and
-// would show a bogus "Off").
+async function refreshAllModels() {
+  try {
+    const byIx = await store.allObservationsByIntersection();
+    const now = Date.now();
+    const models = {};
+    for (const ix of state.intersections) models[ix.id] = characterizeIntersection(ix, byIx[ix.id] ?? [], now);
+    state.models = models;
+  } catch (e) { console.error('models failed', e); }
+}
+
+// The reconstructed model; else an imported plan (e.g. from the TeslaMate tool)
+// — but only one that actually predicts these heads (legacy plans keyed by
+// movement id predict nothing and would show a bogus "Off").
 function livePlanFor(ix, now) {
-  if (state.live.ixId === ix.id && state.live.plan) return state.live.plan;
+  const m = state.models[ix.id]?.plan;
+  if (m) return m;
   const p = activePlan(ix.plans, now);
   const ids = new Set(headsOf(ix).map((h) => h.id));
   return p?.stages?.some((st) => Object.keys(st.states ?? {}).some((k) => ids.has(k))) ? p : null;
@@ -184,9 +188,9 @@ function renderLive(ix) {
 }
 
 // Headline: seconds until the active head next turns green (or green time left).
+// Actuated heads get no number at all: their timing isn't predictable.
 function renderCountdown(plan, active, now) {
-  const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label'), count = $('count');
-  count.classList.remove('range');
+  const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label');
   if (!plan || !active) {
     ind.textContent = plan ? '—' : 'learning';
     num.textContent = '--';
@@ -194,28 +198,32 @@ function renderCountdown(plan, active, now) {
     return;
   }
   const pred = predictHead(plan, active.id, now);
-  ind.textContent = ASPECT_LABEL[pred?.aspect] ?? '—';
-  if (pred?.aspect === 'green') {
-    if (pred.uncertain && pred.range) { count.classList.add('range'); num.textContent = `${pred.range[0]}–${pred.range[1]}`; }
-    else num.textContent = pred.secToChange;
+  if (!pred || pred.unpredictable) {
+    ind.textContent = pred ? 'sensor-controlled' : '—';
+    num.textContent = '--';
+    cap.textContent = pred ? 'actuated light — not predicted' : '';
+    return;
+  }
+  ind.textContent = ASPECT_LABEL[pred.aspect] ?? '—';
+  if (pred.aspect === 'green') {
+    num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange;
     cap.textContent = pred.uncertain ? 'green · est. left' : 'green — time left';
     return;
   }
   const tg = timeToAspect(plan, active.id, now, 'green');
-  if (!tg) { num.textContent = '--'; cap.textContent = 'no green in model'; return; }
-  if (tg.range) { count.classList.add('range'); num.textContent = `${tg.range[0]}–${tg.range[1]}`; }
-  else num.textContent = tg.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
-  cap.textContent = tg.range ? 'to green · actuated, range' : tg.uncertain ? 'to green · estimate' : 'to green';
+  if (!tg || tg.unpredictable) { num.textContent = '--'; cap.textContent = tg ? 'actuated light — not predicted' : 'no green in model'; return; }
+  num.textContent = pred.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
+  cap.textContent = pred.uncertain ? 'to green · estimate' : 'to green';
 }
 
 function renderLiveMeta(ix, plan, active) {
-  const rec = state.live.ixId === ix.id ? state.live.rec : null;
+  const rec = state.models[ix.id]?.rec;
   const verdict = active && rec?.headVerdicts?.[active.id];
   const parts = [];
   const conf = plan?.confidence?.level;
   if (conf) parts.push(`<span class="badge ${conf}">confidence: ${conf}</span>`);
   if (verdict === 'fixed') parts.push('<span class="badge high">fixed · predictable</span>');
-  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">actuated · range only</span>');
+  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">actuated · not predicted</span>');
   else if (verdict === 'insufficient') parts.push('<span class="badge">need more taps</span>');
   if (active) parts.push(`<span class="badge">${esc(active.label)}</span>`);
   $('meta').innerHTML = parts.join('');
@@ -264,7 +272,7 @@ async function undoLast() {
   await store.deleteObservation(id);
   state.lastObs = null;
   const ix = state.intersections.find((i) => i.id === ixId);
-  if (ix) await refreshLiveModel(ix);
+  if (ix) await refreshModel(ix);
   tick();
 }
 
@@ -397,7 +405,7 @@ async function logAspect(intersectionId, headId, aspect, kind) {
   const head = headsOf(ix).find((h) => h.id === headId);
   state.captureLog.push({ t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
-  await refreshLiveModel(ix);
+  await refreshModel(ix);
   renderCapture();
   tick();
 }
@@ -417,9 +425,7 @@ async function reloadData() {
   state.intersections = await store.allIntersections();
   // New data (sync/import/edit) must reach the Live countdown now, not only
   // after the next intersection change.
-  recomputeRanking();
-  const ix = currentIntersection();
-  if (ix) await refreshLiveModel(ix);
+  await refreshAllModels();
   refreshEditor();
   refreshAnalyze();
   tick();
@@ -434,6 +440,7 @@ function editorApi() {
     remove: async (id) => { await store.deleteIntersection(id); },
     gpsNow: () => state.pos,
     nowMs: () => Date.now(),
+    model: (id) => { const ix = state.intersections.find((i) => i.id === id); return ix ? livePlanFor(ix, Date.now()) : null; },
     onChange: reloadData,
   };
 }
@@ -444,7 +451,6 @@ function analyzeApi() {
     get: (id) => state.intersections.find((i) => i.id === id),
     observationsAll: () => store.allObservationsByIntersection(),
     nowMs: () => Date.now(),
-    saveIntersection: async (ix) => { await store.putIntersection(ix); },
     onChange: reloadData,
   };
 }

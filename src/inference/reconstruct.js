@@ -140,10 +140,7 @@ function headWindows(evs, epoch, cycleSec) {
   let maxSpread = 0;
   for (const [aspect, raw] of Object.entries(byAspect)) {
     const poss = rejectOutliers(raw, cycleSec);
-    const pos = circMean(poss, cycleSec);
-    // signed scatter of this boundary around its mean -> the actuated range
-    const devs = poss.map((p) => ((p - pos + cycleSec * 1.5) % cycleSec) - cycleSec / 2);
-    onsets.push({ pos: round1(pos), aspect, nextPartial: false, devMin: round1(Math.min(...devs)), devMax: round1(Math.max(...devs)) });
+    onsets.push({ pos: round1(circMean(poss, cycleSec)), aspect, nextPartial: false });
     maxSpread = Math.max(maxSpread, circSpread(poss, cycleSec));
   }
   onsets.sort((a, b) => a.pos - b.pos);
@@ -208,19 +205,12 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   if (!bounds.length) return null;
   if (bounds[0] > 0) bounds.unshift(0);
 
-  // What each boundary position is: owned by which heads' onsets, is any owner
-  // actuated, and how far it scatters. A phase's type/range come from the
-  // boundary that ENDS it — so one actuated head no longer taints the countdown
-  // of a fixed head at the same junction.
-  const boundaryAt = new Map();
-  for (const hw of hws) for (const o of hw.onsets) {
-    const b = boundaryAt.get(o.pos) ?? { actuated: false, devMin: 0, devMax: 0 };
-    if (hw.verdict === 'actuated') {
-      b.actuated = true;
-      b.devMin = Math.min(b.devMin, o.devMin); b.devMax = Math.max(b.devMax, o.devMax);
-    }
-    boundaryAt.set(o.pos, b);
-  }
+  // A phase is 'actuated' (shown as "sensor" in Analyze) when the boundary that
+  // ENDS it belongs to an actuated head. Display only: actuated heads are not
+  // predicted at all (see unpredictableHeads), and a fixed head's countdown
+  // never depends on another head's boundaries.
+  const actuatedAt = new Set();
+  for (const hw of hws) if (hw.verdict === 'actuated') for (const o of hw.onsets) actuatedAt.add(o.pos);
 
   const phases = [];
   let impliedGaps = 0;
@@ -236,12 +226,9 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
       if (at.partial) partialHeads.push(hw.headId); // an unobserved change falls in this arc
     }
     if (partialHeads.length) impliedGaps++;
-    const durSec = round1(endSec - startSec);
-    const end = boundaryAt.get(i + 1 < bounds.length ? bounds[i + 1] : bounds[0]);
-    const phase = { startSec: round1(startSec), durSec, states, type: end?.actuated ? 'actuated' : 'fixed',
-      partial: partialHeads.length > 0, partialHeads };
-    if (end?.actuated) { phase.minSec = round1(Math.max(0, durSec + end.devMin)); phase.maxSec = round1(durSec + end.devMax); }
-    phases.push(phase);
+    const endsAt = i + 1 < bounds.length ? bounds[i + 1] : bounds[0];
+    phases.push({ startSec: round1(startSec), durSec: round1(endSec - startSec), states,
+      type: actuatedAt.has(endsAt) ? 'actuated' : 'fixed', partial: partialHeads.length > 0, partialHeads });
   }
 
   const cyclesObserved = Math.max(1, Math.round(used.length / Math.max(1, hws.reduce((s, h) => s + h.onsets.length, 0))));
@@ -251,8 +238,8 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   const modelable = fixedHeads > 0 && cycleLengthSec > 0;
   const worstSpread = Math.max(0, ...hws.map((h) => h.maxSpread));
   // `impliedGaps` (an unobserved aspect, e.g. amber never captured) is surfaced
-  // separately and makes those phases uncertain in the predictor; it does not
-  // demote the cycle/offset confidence that linkage keys on.
+  // separately and makes those arcs uncertain in the predictor; it does not
+  // demote the cycle/offset confidence.
   const level = timeBasedRatio === 1 && observedHeads.length && cyclesObserved >= 5 && worstSpread <= 2 ? 'high'
     : modelable && cyclesObserved >= 2 ? 'medium' : 'low';
 
@@ -278,15 +265,16 @@ export function reconstructionToPlan(rec, meta = {}) {
     schedule: meta.schedule,
     epoch: rec.epoch,
     cycleLengthMs: Math.round(rec.cycleLengthSec * 1000),
+    // Actuated heads drift into useless probabilities within a few cycles, so
+    // they get no prediction at all — only the verdict.
+    unpredictableHeads: Object.entries(rec.headVerdicts ?? {}).filter(([, v]) => v === 'actuated').map(([h]) => h),
     confidence: rec.confidence,
     stages: rec.phases.map((p, i) => ({
       name: `Phase ${i + 1}`,
       states: p.states,
       partial: !!p.partial,
       partialHeads: p.partialHeads ?? [],
-      timing: p.type === 'actuated' && p.minSec != null
-        ? { type: p.type, sec: p.durSec, min: p.minSec, max: p.maxSec }
-        : { type: p.type, sec: p.durSec },
+      timing: { type: p.type, sec: p.durSec },
     })),
   };
 }

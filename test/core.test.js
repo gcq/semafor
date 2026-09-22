@@ -56,18 +56,19 @@ test('flashing amber is a go aspect', () => {
   assert.equal(p.secToChange, 15);
 });
 
-test('actuated phase yields a range and marks uncertainty', () => {
+test('an actuated boundary is not predicted (imported/legacy plans mark phases)', () => {
   const act = withCycleLength({ id: 'p2', epoch: 0, stages: [
     { states: { h1: 'red' }, timing: { type: 'fixed', sec: 20 } },
-    { states: { h1: 'green' }, timing: { type: 'actuated', sec: 20, min: 8, max: 45 } },
+    { states: { h1: 'green' }, timing: { type: 'actuated', sec: 20 } },
   ] });
-  const p = predictHead(act, 'h1', 25_000); // 5s into green
-  assert.equal(p.uncertain, true);
-  assert.ok(Array.isArray(p.range));
-  assert.equal(p.range[0], 3);
-  assert.equal(p.range[1], 40);
+  const g = predictHead(act, 'h1', 25_000); // in green, whose end is actuated
+  assert.equal(g.unpredictable, true);
+  assert.equal(g.secToChange, null);
+  assert.equal(g.aspect, null);
+  const r = predictHead(act, 'h1', 10_000); // in red, whose end is a fixed boundary
+  assert.equal(r.unpredictable, false);
+  assert.equal(r.secToChange, 10);
 });
-
 test('activePlan honours time-of-day windows (incl. wrap past midnight)', () => {
   const plans = [
     { id: 'night', schedule: { fromMin: 22 * 60, toMin: 6 * 60 }, epoch: 0, stages: plan.stages },
