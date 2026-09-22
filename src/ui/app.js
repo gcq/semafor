@@ -2,10 +2,11 @@
 // store, and paints the DOM on a timer. No framework.
 
 import * as store from '../store/db.js';
-import { predictIntersection, activePlan, predictHead, timeToAspect } from '../predict/state.js';
+import { activePlan, predictHead, timeToAspect } from '../predict/state.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
 import { reconstructPlan, reconstructionToPlan } from '../inference/reconstruct.js';
 import { uid } from '../domain/model.js';
+import { mergeBundles } from '../sync/merge.js';
 import { drawScene } from './live-scene.js';
 import { mountEditor, refreshEditor } from './editor.js';
 import { mountAnalyze, refreshAnalyze } from './analyze.js';
@@ -202,8 +203,9 @@ function renderCountdown(plan, active, now) {
   }
   const tg = timeToAspect(plan, active.id, now, 'green');
   if (!tg) { num.textContent = '--'; cap.textContent = 'no green in model'; return; }
-  num.textContent = tg.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
-  cap.textContent = tg.uncertain ? 'to green · estimate' : 'to green';
+  if (tg.range) { count.classList.add('range'); num.textContent = `${tg.range[0]}–${tg.range[1]}`; }
+  else num.textContent = tg.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
+  cap.textContent = tg.range ? 'to green · actuated, range' : tg.uncertain ? 'to green · estimate' : 'to green';
 }
 
 function renderLiveMeta(ix, plan, active) {
@@ -275,25 +277,31 @@ function colorButtonsHtml(small) {
     `<button class="cap ${cls}${small ? ' small' : ''}" data-aspect="${a}">${label}</button>`).join('');
 }
 
+// Rows are rebuilt only when the set/selection changes; dots and ETAs are then
+// updated in place — rebuilding every 250ms tick swallowed taps on the rows.
 function renderUpcoming(currentIx) {
   const list = $('upcoming-list');
   const rows = state.ranked.slice(0, 5);
-  list.innerHTML = rows.map(({ intersection: ix, etaSec }) => {
-    const pred = predictIntersection(ix, {});
-    const color = pred?.color ?? 'dark';
-    const eta = etaSec == null ? '' : etaSec > 90 ? `${Math.round(etaSec / 60)} min` : `${Math.round(etaSec)}s`;
-    const sel = ix.id === currentIx.id ? ' sel' : '';
-    return `<div class="row${sel}" data-id="${ix.id}">
-      <span class="dot ${color}"></span>
-      <span class="name">${ix.name}</span>
-      <span class="eta">${eta}</span>
-    </div>`;
-  }).join('');
-  list.querySelectorAll('.row').forEach((r) => r.onclick = () => {
-    const id = r.dataset.id;
-    state.selectedId = state.selectedId === id ? null : id; // toggle manual/auto
-    store.setPref('selectedId', state.selectedId);
-    tick();
+  const key = rows.map((r) => r.intersection.id + ':' + r.intersection.name).join('|') + '#' + currentIx.id;
+  if (list.dataset.key !== key) {
+    list.dataset.key = key;
+    list.innerHTML = rows.map(({ intersection: ix }) => `<div class="row${ix.id === currentIx.id ? ' sel' : ''}" data-id="${ix.id}">
+      <span class="dot"></span><span class="name">${esc(ix.name)}</span><span class="eta"></span></div>`).join('');
+    list.querySelectorAll('.row').forEach((r) => (r.onclick = () => {
+      const id = r.dataset.id;
+      state.selectedId = state.selectedId === id ? null : id; // toggle manual/auto
+      store.setPref('selectedId', state.selectedId);
+      tick();
+    }));
+  }
+  const now = Date.now();
+  rows.forEach(({ intersection: ix, etaSec }, i) => {
+    const row = list.children[i]; if (!row) return;
+    const plan = livePlanFor(ix, now);
+    const head = resolveActiveHead(ix, headsOf(ix));
+    const pred = plan && head ? predictHead(plan, head.id, now) : null;
+    row.querySelector('.dot').className = `dot ${pred?.color ?? 'dark'}`;
+    row.querySelector('.eta').textContent = etaSec == null ? '' : etaSec > 90 ? `${Math.round(etaSec / 60)} min` : `${Math.round(etaSec)}s`;
   });
 }
 
@@ -407,6 +415,11 @@ function wireUi() {
 // Reload the intersection set from the store and refresh every view.
 async function reloadData() {
   state.intersections = await store.allIntersections();
+  // New data (sync/import/edit) must reach the Live countdown now, not only
+  // after the next intersection change.
+  recomputeRanking();
+  const ix = currentIntersection();
+  if (ix) await refreshLiveModel(ix);
   refreshEditor();
   refreshAnalyze();
   tick();
@@ -441,7 +454,13 @@ function syncApi() {
     getBundle: () => store.exportAll(),
     applyMerged: async (merged) => { await store.applyMerged(merged); await reloadData(); },
     exportText: async () => JSON.stringify(await store.exportAll(), null, 2),
-    importBundle: async (bundle) => { await store.importAll(bundle, { merge: true }); await reloadData(); },
+    // Import merges exactly like sync (newest edit wins, tombstones honored) —
+    // it used to overwrite intersections with the file's copies blindly.
+    importBundle: async (bundle) => {
+      const { merged } = mergeBundles(await store.exportAll(), bundle);
+      await store.applyMerged(merged);
+      await reloadData();
+    },
   };
 }
 

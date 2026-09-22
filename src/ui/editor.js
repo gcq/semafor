@@ -93,9 +93,12 @@ function syncMap() {
   if (!ensureMap() || !draft) return;
   const { lat, lon } = draft.location;
   const has = Number.isFinite(lat) && (lat !== 0 || lon !== 0);
-  const c = has ? [lat, lon] : [ctx.api.gpsNow()?.lat ?? -34.6, ctx.api.gpsNow()?.lon ?? -58.42];
+  const gps = ctx.api.gpsNow();
+  const other = ctx.api.list().find((i) => i.location && (i.location.lat || i.location.lon))?.location;
+  const guess = gps ?? other;
+  const c = has ? [lat, lon] : guess ? [guess.lat, guess.lon] : [20, 0];
   centerMarker.setLatLng(c);
-  map.setView(c, has ? 18 : 13);
+  map.setView(c, has ? 18 : guess ? 16 : 2);
   rebuildMasts();
   setTimeout(() => map.invalidateSize(), 0);
 }

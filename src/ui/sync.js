@@ -15,10 +15,12 @@ export function mountSync(root, api) {
 
 /** If the app was opened from a scanned sync URL (?sync=CODE), auto-join. */
 export function autoJoinFromUrl() {
-  const code = new URLSearchParams(location.search).get('sync');
+  // The code is the encryption secret, so it rides in the #fragment, which the
+  // browser never sends to the server (GitHub Pages would log a ?query). ?sync=
+  // is still accepted for QR codes made by older builds.
+  const code = new URLSearchParams(location.hash.slice(1)).get('sync') ?? new URLSearchParams(location.search).get('sync');
   if (!code) return false;
-  // The code is the encryption secret: don't leave it in the address bar/history.
-  history.replaceState(null, '', location.pathname);
+  history.replaceState(null, '', location.pathname); // and don't keep it in history
   start(code, false);
   return true;
 }
@@ -50,7 +52,7 @@ function idleHtml() {
 }
 
 function sessionHtml() {
-  const url = `${location.origin}${location.pathname}?sync=${session.code}`;
+  const url = `${location.origin}${location.pathname}#sync=${session.code}`;
   const qr = qrSvg(url);
   return `
     <div style="text-align:center">
@@ -82,7 +84,7 @@ async function start(code, host) {
   session = { code, host, leave: null };
   render();
   const set = (id, html) => { const n = document.getElementById(id); if (n) n.innerHTML = html; };
-  const total = { ixAdded: 0, ixUpdated: 0, ixDeleted: 0, obsAdded: 0 };
+  const total = { ixAdded: 0, ixUpdated: 0, ixDeleted: 0, obsAdded: 0, obsRemoved: 0 };
   try {
     const s = await startSync(code, {
       getBundle: () => ctx.api.getBundle(),
@@ -92,7 +94,7 @@ async function start(code, host) {
         for (const k of Object.keys(total)) total[k] += st[k] ?? 0;
         set('sync-result',
           `<div class="verdict linked"><div class="head" style="color:var(--green)">synced ✓ ${new Date().toLocaleTimeString()}</div>
-           <div class="muted-note">received so far: +${total.obsAdded} observations, +${total.ixAdded} intersections, ${total.ixUpdated} updated, ${total.ixDeleted} removed</div></div>`);
+           <div class="muted-note">received so far: +${total.obsAdded} observations${total.obsRemoved ? ` (−${total.obsRemoved} undone)` : ''}, +${total.ixAdded} intersections, ${total.ixUpdated} updated, ${total.ixDeleted} removed</div></div>`);
       },
     });
     if (session?.code === code) session.leave = s.leave; else s.leave();

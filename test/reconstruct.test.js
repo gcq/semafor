@@ -131,7 +131,7 @@ test('timeToAspect gives seconds until a head next turns green', () => {
   const plan = reconstructionToPlan(reconstructPlan(genEvents(6), ['A', 'B']));
   const epoch = plan.epoch;
   // A is green 0-45; at 20s in it's already green
-  assert.deepEqual(timeToAspect(plan, 'A', epoch + 20000, 'green'), { secToAspect: 0, current: true, uncertain: false });
+  assert.deepEqual(timeToAspect(plan, 'A', epoch + 20000, 'green'), { secToAspect: 0, current: true, uncertain: false, range: null });
   // at 60s in, A is red (50-90); next green onset wraps at 90 -> 30s away
   assert.equal(timeToAspect(plan, 'A', epoch + 60000, 'green').secToAspect, 30);
   // B is red 0-50; green starts at 50 -> 30s away at 20s in
@@ -147,4 +147,25 @@ test('recent-window re-anchor folds only recent events', () => {
   const rec = reconstructPlan([...old, ...recent], ['A'], { recentWindowMs: 700000, now: base + 5 * 90000 });
   assert.equal(rec.cycleLengthSec, 90);
   assert.ok(rec.epoch >= base); // re-anchored to the recent run
+});
+
+test('countdown runs to the head\'s own color change, across other heads\' boundaries', () => {
+  // boundaries at 0,45,50,85; A is red 50-90 (spans the 85 boundary, which is B's)
+  const plan = reconstructionToPlan(reconstructPlan(genEvents(6), ['A', 'B']));
+  assert.equal(predictHead(plan, 'A', plan.epoch + 60000).secToChange, 30); // to 90, not to 85
+  assert.equal(predictHead(plan, 'B', plan.epoch + 20000).secToChange, 30); // red 0-50 spans the 45 boundary
+});
+
+test('a fixed head keeps an exact countdown next to an actuated one; actuated gets a range', () => {
+  const rec = reconstructPlan(genEvents(8, [0, 22, -12, 28, -16, 20, -14, 25]), ['A', 'B']);
+  const plan = reconstructionToPlan(rec);
+  // find a moment where B is red and A is green
+  const tB = plan.epoch + 10000;
+  const b = predictHead(plan, 'B', tB);
+  assert.equal(b.uncertain, false);            // B's own boundaries are tight
+  assert.equal(b.range, null);
+  const a = predictHead(plan, 'A', tB);         // A green, ends at its wandering amber
+  assert.equal(a.aspect, 'green');
+  assert.equal(a.uncertain, true);
+  assert.ok(Array.isArray(a.range) && a.range[1] - a.range[0] >= 10, `range ${a.range}`);
 });

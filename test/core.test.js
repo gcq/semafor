@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { predictHead, cycleTimeMs, activePlan } from '../src/predict/state.js';
-import { rankNext, distanceM, angularDiff, pickApproach, headForApproach } from '../src/nav/proximity.js';
+import { rankNext, distanceM, angularDiff, headForApproach } from '../src/nav/proximity.js';
 import { withCycleLength } from '../src/domain/model.js';
 
 // Head h1: red 30s, green 25s, amber 5s (aspects observed directly).
@@ -101,15 +101,6 @@ test('rankNext falls back to nearest when stationary', () => {
   ];
   const ranked = rankNext(pos, null, 0, ixs);
   assert.equal(ranked[0].intersection.id, 'b'); // nearest regardless of direction
-});
-
-test('pickApproach matches travel heading', () => {
-  const ix = { approaches: [
-    { id: 'fromS', bearing: 0 },   // travelling north
-    { id: 'fromW', bearing: 90 },  // travelling east
-  ] };
-  assert.equal(pickApproach(ix, 85).id, 'fromW');
-  assert.equal(pickApproach(ix, 10).id, 'fromS');
 });
 
 test('geo helpers are sane', () => {

@@ -79,21 +79,6 @@ export function rankNext(pos, heading, speed, intersections, opts = {}) {
 }
 
 /**
- * Pick the approach whose travel bearing best matches the current heading, so
- * we show the right signal group without the driver choosing.
- * @param {Intersection} ix
- * @param {number|null} heading
- * @returns {import('../domain/model.js').Approach | null}
- */
-export function pickApproach(ix, heading) {
-  if (!ix.approaches?.length) return null;
-  if (heading == null) return ix.approaches[0];
-  return ix.approaches.reduce((best, a) =>
-    angularDiff(a.bearing, heading) < angularDiff(best.bearing, heading) ? a : best,
-  );
-}
-
-/**
  * The head facing you as you approach `ix` travelling on `approachBearing`.
  * Spanish lights are near-side (before the stop line), so the mast that faces
  * you sits on the side of the junction you are coming FROM: its bearing from the

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeBundles, manifest, diffForPeer, newer } from '../src/sync/merge.js';
+import { mergeBundles, newer } from '../src/sync/merge.js';
 
 const ix = (id, rev, updatedAt, extra = {}) => ({ id, name: id, rev, updatedAt, ...extra });
 const ob = (id, t) => ({ id, intersectionId: 'x', headId: 'h', aspect: 'green', t });
@@ -49,10 +49,17 @@ test('merge is symmetric — both sides converge', () => {
   assert.equal(key(m1).ix.length, 3); // a,b,c
 });
 
-test('diffForPeer sends only what the peer lacks or has older', () => {
-  const local = { intersections: [ix('a', 2, 200), ix('b', 1, 10)], observations: [ob('o1', 1), ob('o2', 2)] };
-  const peer = manifest({ intersections: [ix('a', 1, 100)], observations: [ob('o1', 1)] });
-  const d = diffForPeer(local, peer);
-  assert.deepEqual(d.intersections.map((i) => i.id).sort(), ['a', 'b']); // a newer, b missing
-  assert.deepEqual(d.observations.map((o) => o.id), ['o2']);            // o1 already there
+test('an undone tap (obs tombstone) is removed on the other side and never comes back', () => {
+  const tap = { id: 'o9', intersectionId: 'a', headId: 'h', aspect: 'red', t: 5 };
+  const phone = { intersections: [], observations: [tap], tombstones: [] };            // still has it
+  const car = { intersections: [], observations: [], tombstones: [{ id: 'o9', kind: 'obs', deletedAt: 9 }] }; // undid it
+  const onPhone = mergeBundles(phone, car);
+  assert.equal(onPhone.merged.observations.length, 0);
+  assert.equal(onPhone.stats.obsRemoved, 1);
+  const onCar = mergeBundles(car, phone);                                               // phone's copy can't resurrect it
+  assert.equal(onCar.merged.observations.length, 0);
+  assert.equal(onCar.stats.obsAdded, 0);
+  // an obs tombstone never deletes an intersection that happens to share nothing with it
+  const withIx = mergeBundles({ intersections: [{ id: 'a', rev: 1 }], observations: [], tombstones: [] }, car);
+  assert.equal(withIx.merged.intersections.length, 1);
 });

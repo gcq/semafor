@@ -140,7 +140,10 @@ function headWindows(evs, epoch, cycleSec) {
   let maxSpread = 0;
   for (const [aspect, raw] of Object.entries(byAspect)) {
     const poss = rejectOutliers(raw, cycleSec);
-    onsets.push({ pos: round1(circMean(poss, cycleSec)), aspect, nextPartial: false });
+    const pos = circMean(poss, cycleSec);
+    // signed scatter of this boundary around its mean -> the actuated range
+    const devs = poss.map((p) => ((p - pos + cycleSec * 1.5) % cycleSec) - cycleSec / 2);
+    onsets.push({ pos: round1(pos), aspect, nextPartial: false, devMin: round1(Math.min(...devs)), devMax: round1(Math.max(...devs)) });
     maxSpread = Math.max(maxSpread, circSpread(poss, cycleSec));
   }
   onsets.sort((a, b) => a.pos - b.pos);
@@ -205,7 +208,20 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   if (!bounds.length) return null;
   if (bounds[0] > 0) bounds.unshift(0);
 
-  const anyActuated = hws.some((hw) => hw.verdict === 'actuated');
+  // What each boundary position is: owned by which heads' onsets, is any owner
+  // actuated, and how far it scatters. A phase's type/range come from the
+  // boundary that ENDS it — so one actuated head no longer taints the countdown
+  // of a fixed head at the same junction.
+  const boundaryAt = new Map();
+  for (const hw of hws) for (const o of hw.onsets) {
+    const b = boundaryAt.get(o.pos) ?? { actuated: false, devMin: 0, devMax: 0 };
+    if (hw.verdict === 'actuated') {
+      b.actuated = true;
+      b.devMin = Math.min(b.devMin, o.devMin); b.devMax = Math.max(b.devMax, o.devMax);
+    }
+    boundaryAt.set(o.pos, b);
+  }
+
   const phases = [];
   let impliedGaps = 0;
   for (let i = 0; i < bounds.length; i++) {
@@ -213,16 +229,19 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
     const endSec = i + 1 < bounds.length ? bounds[i + 1] : cycleLengthSec;
     const mid = (startSec + endSec) / 2;
     const states = {};
-    let partial = false;
+    const partialHeads = [];
     for (const hw of hws) {
       const at = aspectAt(hw, mid);
       states[hw.headId] = at.aspect;
-      if (at.partial) partial = true; // an unobserved transition falls in this arc
+      if (at.partial) partialHeads.push(hw.headId); // an unobserved change falls in this arc
     }
-    if (partial) impliedGaps++;
-    // a phase is "actuated" if any head has wide spread; "partial" if a head's
-    // aspect here is really a guess spanning an unobserved change.
-    phases.push({ startSec: round1(startSec), durSec: round1(endSec - startSec), states, type: anyActuated ? 'actuated' : 'fixed', partial });
+    if (partialHeads.length) impliedGaps++;
+    const durSec = round1(endSec - startSec);
+    const end = boundaryAt.get(i + 1 < bounds.length ? bounds[i + 1] : bounds[0]);
+    const phase = { startSec: round1(startSec), durSec, states, type: end?.actuated ? 'actuated' : 'fixed',
+      partial: partialHeads.length > 0, partialHeads };
+    if (end?.actuated) { phase.minSec = round1(Math.max(0, durSec + end.devMin)); phase.maxSec = round1(durSec + end.devMax); }
+    phases.push(phase);
   }
 
   const cyclesObserved = Math.max(1, Math.round(used.length / Math.max(1, hws.reduce((s, h) => s + h.onsets.length, 0))));
@@ -264,7 +283,10 @@ export function reconstructionToPlan(rec, meta = {}) {
       name: `Phase ${i + 1}`,
       states: p.states,
       partial: !!p.partial,
-      timing: { type: p.type, sec: p.durSec },
+      partialHeads: p.partialHeads ?? [],
+      timing: p.type === 'actuated' && p.minSec != null
+        ? { type: p.type, sec: p.durSec, min: p.minSec, max: p.maxSec }
+        : { type: p.type, sec: p.durSec },
     })),
   };
 }

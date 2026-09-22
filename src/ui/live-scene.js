@@ -47,8 +47,10 @@ export function drawScene(canvas, scene) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 320;
   const H = canvas.clientHeight || 260;
-  canvas.width = Math.round(W * dpr);
-  canvas.height = Math.round(H * dpr);
+  // Reassigning width/height reallocates the backing store even when unchanged;
+  // only do it on a real size change (this runs 4×/s on the car's browser).
+  const bw = Math.round(W * dpr), bh = Math.round(H * dpr);
+  if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
 

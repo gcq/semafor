@@ -2,13 +2,21 @@
 // the raw observation log (which can grow large); localStorage holds tiny prefs.
 // No server, ever. Import/export is plain JSON so a model can be shared as a
 // file, a QR, or a URL hash without any backend.
+//
+// One connection is opened lazily and reused (it used to open a new one per
+// operation), and bulk writes (sync/import) go through a single transaction that
+// only writes what's actually new — sync runs every few seconds in the car.
+
+import { mergeBundles } from '../sync/merge.js';
 
 const DB_NAME = 'onda';
 const DB_VERSION = 2;
 
+let _db = null;
 /** @returns {Promise<IDBDatabase>} */
 function open() {
-  return new Promise((resolve, reject) => {
+  if (_db) return _db;
+  _db = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -19,20 +27,31 @@ function open() {
         os.createIndex('byIntersection', 'intersectionId', { unique: false });
       }
       if (!db.objectStoreNames.contains('tombstones'))
-        db.createObjectStore('tombstones', { keyPath: 'id' }); // deleted intersection ids
+        db.createObjectStore('tombstones', { keyPath: 'id' }); // deleted intersection + observation ids
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      // another tab upgrading, or the browser closing it: reopen on next use
+      db.onversionchange = () => { db.close(); _db = null; };
+      db.onclose = () => { _db = null; };
+      resolve(db);
+    };
+    req.onerror = () => { _db = null; reject(req.error); };
   });
+  return _db;
 }
 
-function tx(db, store, mode, fn) {
+// Run `fn(stores)` in one transaction over `names`; resolves with fn's box value
+// once the transaction commits.
+async function tx(names, mode, fn) {
+  const db = await open();
   return new Promise((resolve, reject) => {
-    const t = db.transaction(store, mode);
-    const os = t.objectStore(store);
-    const out = fn(os);
+    const t = db.transaction(names, mode);
+    const stores = Object.fromEntries([].concat(names).map((n) => [n, t.objectStore(n)]));
+    const out = fn(stores);
     t.oncomplete = () => resolve(out?._result ?? out);
     t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
   });
 }
 
@@ -42,52 +61,34 @@ const reqValue = (request) => {
   return box;
 };
 
-export async function allIntersections() {
-  const db = await open();
-  return tx(db, 'intersections', 'readonly', (os) => reqValue(os.getAll()));
-}
-
-export async function putIntersection(ix) {
-  const db = await open();
-  return tx(db, 'intersections', 'readwrite', (os) => os.put(ix));
-}
+export const allIntersections = () => tx('intersections', 'readonly', (s) => reqValue(s.intersections.getAll()));
+export const putIntersection = (ix) => tx('intersections', 'readwrite', (s) => { s.intersections.put(ix); });
+export const allTombstones = () => tx('tombstones', 'readonly', (s) => reqValue(s.tombstones.getAll()));
 
 export async function deleteIntersection(id) {
-  const db = await open();
-  const existing = await tx(db, 'intersections', 'readonly', (os) => reqValue(os.get(id)));
-  await tx(db, 'intersections', 'readwrite', (os) => os.delete(id));
+  const existing = await tx('intersections', 'readonly', (s) => reqValue(s.intersections.get(id)));
   // leave a tombstone so the delete propagates through sync instead of being
   // undone by an older copy on another device
-  const t = { id, rev: (existing?.rev ?? 0) + 1, deletedAt: Date.now() };
-  await tx(db, 'tombstones', 'readwrite', (os) => os.put(t));
+  await tx(['intersections', 'tombstones'], 'readwrite', (s) => {
+    s.intersections.delete(id);
+    s.tombstones.put({ id, rev: (existing?.rev ?? 0) + 1, deletedAt: Date.now() });
+  });
 }
 
-export async function allTombstones() {
-  const db = await open();
-  return tx(db, 'tombstones', 'readonly', (os) => reqValue(os.getAll()));
-}
+export const addObservation = (obs) => tx('observations', 'readwrite', (s) => { s.observations.add(obs); });
 
-export async function addObservation(obs) {
-  const db = await open();
-  return tx(db, 'observations', 'readwrite', (os) => os.add(obs));
-}
+/** Remove an observation (undo) and tombstone it so sync doesn't bring it back. */
+export const deleteObservation = (id) => tx(['observations', 'tombstones'], 'readwrite', (s) => {
+  s.observations.delete(id);
+  s.tombstones.put({ id, kind: 'obs', deletedAt: Date.now() });
+});
 
-export async function deleteObservation(id) {
-  const db = await open();
-  return tx(db, 'observations', 'readwrite', (os) => os.delete(id));
-}
-
-export async function observationsFor(intersectionId) {
-  const db = await open();
-  return tx(db, 'observations', 'readonly', (os) =>
-    reqValue(os.index('byIntersection').getAll(intersectionId)),
-  );
-}
+export const observationsFor = (intersectionId) =>
+  tx('observations', 'readonly', (s) => reqValue(s.observations.index('byIntersection').getAll(intersectionId)));
 
 /** All observations grouped by intersection id. */
 export async function allObservationsByIntersection() {
-  const db = await open();
-  const all = await tx(db, 'observations', 'readonly', (os) => reqValue(os.getAll()));
+  const all = await tx('observations', 'readonly', (s) => reqValue(s.observations.getAll()));
   const by = {};
   for (const o of all) (by[o.intersectionId] ??= []).push(o);
   return by;
@@ -104,38 +105,47 @@ export function setPref(key, value) {
 
 // --- portability ---
 export async function exportAll() {
-  const db = await open();
-  const intersections = await allIntersections();
-  const observations = await tx(db, 'observations', 'readonly', (os) => reqValue(os.getAll()));
-  const tombstones = await allTombstones();
+  const [intersections, observations, tombstones] = await tx(['intersections', 'observations', 'tombstones'], 'readonly', (s) => {
+    const a = reqValue(s.intersections.getAll()), b = reqValue(s.observations.getAll()), c = reqValue(s.tombstones.getAll());
+    const box = {};
+    Object.defineProperty(box, '_result', { get: () => [a._result, b._result, c._result] });
+    return box;
+  });
   return { version: 2, exportedAt: Date.now(), intersections, observations, tombstones };
 }
 
+/**
+ * Import a bundle. Default merges exactly like sync (newest edit wins,
+ * tombstones honored); `merge:false` replaces everything with the bundle.
+ */
 export async function importAll(bundle, { merge = true } = {}) {
-  const db = await open();
-  if (!merge) {
-    await tx(db, 'intersections', 'readwrite', (os) => os.clear());
-    await tx(db, 'observations', 'readwrite', (os) => os.clear());
-    await tx(db, 'tombstones', 'readwrite', (os) => os.clear());
-  }
-  for (const ix of bundle.intersections ?? []) await putIntersection(ix);
-  for (const ob of bundle.observations ?? []) {
-    try { await addObservation(ob); } catch { /* dupe id on merge */ }
-  }
-  for (const t of bundle.tombstones ?? []) await tx(db, 'tombstones', 'readwrite', (os) => os.put(t));
+  if (merge) return applyMerged(mergeBundles(await exportAll(), bundle).merged);
+  await tx(['intersections', 'observations', 'tombstones'], 'readwrite', (s) => {
+    s.intersections.clear(); s.observations.clear(); s.tombstones.clear();
+  });
+  return applyMerged({ intersections: bundle.intersections ?? [], observations: bundle.observations ?? [], tombstones: bundle.tombstones ?? [] });
 }
 
 /**
- * Overwrite storage with an already-reconciled bundle (from sync). Intersections
- * become exactly `merged.intersections` (others removed), observations and
- * tombstones are unioned in.
+ * Overwrite storage with an already-reconciled bundle (from sync/import), in one
+ * transaction: intersections become exactly `merged.intersections`, new
+ * observations are added, tombstoned observations removed, tombstones unioned.
  */
-export async function applyMerged(merged) {
-  const db = await open();
+export function applyMerged(merged) {
   const keep = new Set((merged.intersections ?? []).map((i) => i.id));
-  const localIds = (await allIntersections()).map((i) => i.id);
-  for (const id of localIds) if (!keep.has(id)) await tx(db, 'intersections', 'readwrite', (os) => os.delete(id));
-  for (const ix of merged.intersections ?? []) await putIntersection(ix);
-  for (const ob of merged.observations ?? []) { try { await addObservation(ob); } catch { /* dupe */ } }
-  for (const t of merged.tombstones ?? []) await tx(db, 'tombstones', 'readwrite', (os) => os.put(t));
+  const deadObs = new Set((merged.tombstones ?? []).filter((t) => t.kind === 'obs').map((t) => t.id));
+  return tx(['intersections', 'observations', 'tombstones'], 'readwrite', (s) => {
+    const ixKeys = s.intersections.getAllKeys();
+    ixKeys.onsuccess = () => {
+      for (const id of ixKeys.result) if (!keep.has(id)) s.intersections.delete(id);
+      for (const ix of merged.intersections ?? []) s.intersections.put(ix);
+    };
+    const obsKeys = s.observations.getAllKeys();
+    obsKeys.onsuccess = () => {
+      const have = new Set(obsKeys.result);
+      for (const o of merged.observations ?? []) if (!have.has(o.id) && !deadObs.has(o.id)) s.observations.put(o);
+      for (const id of deadObs) if (have.has(id)) s.observations.delete(id);
+    };
+    for (const t of merged.tombstones ?? []) s.tombstones.put(t);
+  });
 }

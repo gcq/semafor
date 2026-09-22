@@ -45,8 +45,45 @@ export function cycleTimeMs(plan, now) {
  * @property {number} phaseIndex
  */
 
+// A phase's timing describes its END boundary: `type` says whether that
+// boundary is fixed or actuated, and for actuated ones `min`/`max` bound the
+// phase's duration (i.e. when the boundary can fall).
+const endsActuated = (ph) => ph.timing?.type === 'actuated';
+// Is this head's aspect in this phase a guess spanning an unobserved change?
+const partialFor = (ph, headId) => (ph.partialHeads ? ph.partialHeads.includes(headId) : !!ph.partial);
+
+function locate(phases, t) {
+  let acc = 0;
+  for (let i = 0; i < phases.length; i++) {
+    if (t < acc + phases[i].timing.sec || i === phases.length - 1) return { idx: i, elapsed: t - acc };
+    acc += phases[i].timing.sec;
+  }
+  return { idx: 0, elapsed: 0 };
+}
+
+// Seconds from now until the boundary at the END of phase `endIdx` (walking
+// forward from the current phase), plus its range if that boundary is actuated.
+// Only the boundary you're waiting for matters: jitter of other heads'
+// boundaries in between doesn't move it (positions are cycle-relative), so a
+// fixed head at a junction with an actuated one still gets an exact countdown.
+function arrival(phases, idx, elapsed, steps) {
+  let total = phases[idx].timing.sec - elapsed;
+  let end = idx;
+  for (let s = 1; s <= steps; s++) { end = (idx + s) % phases.length; total += phases[end].timing.sec; }
+  const ph = phases[end];
+  let range = null;
+  if (endsActuated(ph)) {
+    const lo = total + ((ph.timing.min ?? ph.timing.sec) - ph.timing.sec);
+    const hi = total + ((ph.timing.max ?? ph.timing.sec) - ph.timing.sec);
+    range = [Math.max(0, Math.round(lo)), Math.max(0, Math.round(hi))];
+  }
+  return { sec: Math.max(0, total), range, actuated: endsActuated(ph) };
+}
+
 /**
- * Predict a head's aspect at `now`.
+ * Predict a head's aspect at `now`, and how long until IT changes color (not
+ * merely until the next phase boundary — at a multi-head junction the head can
+ * keep its color across several phases).
  * @param {TimingPlan} plan
  * @param {string} headId
  * @param {number} now
@@ -55,95 +92,52 @@ export function cycleTimeMs(plan, now) {
 export function predictHead(plan, headId, now) {
   if (!plan?.stages?.length) return null;
   const phases = plan.stages;
-  const t = cycleTimeMs(plan, now) / 1000;
+  const { idx, elapsed } = locate(phases, cycleTimeMs(plan, now) / 1000);
+  const aspectAt = (i) => phases[i].states[headId] ?? 'off';
+  const aspect = aspectAt(idx);
 
-  let acc = 0, idx = 0, uncertainBefore = false;
-  for (let i = 0; i < phases.length; i++) {
-    const len = phases[i].timing.sec;
-    if (t < acc + len || i === phases.length - 1) { idx = i; break; }
-    if (phases[i].timing.type === 'actuated' || phases[i].partial) uncertainBefore = true;
-    acc += len;
-  }
-  const phase = phases[idx];
-  const elapsed = t - acc;
-  const remaining = Math.max(0, phase.timing.sec - elapsed);
-  const aspect = phase.states[headId] ?? 'off';
-  const nextPhase = phases[(idx + 1) % phases.length];
+  // walk until the head's aspect differs (at most one full cycle)
+  let steps = 0;
+  while (steps < phases.length - 1 && aspectAt((idx + steps + 1) % phases.length) === aspect) steps++;
+  const next = aspectAt((idx + steps + 1) % phases.length);
+  const a = arrival(phases, idx, elapsed, steps);
 
-  const uncertain = uncertainBefore || phase.timing.type === 'actuated' || !!phase.partial;
-  let range = null;
-  if (phase.timing.type === 'actuated') {
-    const min = Math.max(0, (phase.timing.min ?? phase.timing.sec) - elapsed);
-    const max = Math.max(0, (phase.timing.max ?? phase.timing.sec) - elapsed);
-    range = [Math.round(min), Math.round(max)];
-  }
   const info = ASPECT_INFO[aspect] ?? ASPECT_INFO.off;
   return {
     aspect, color: info.color, go: info.go,
-    secToChange: Math.round(remaining), range, uncertain,
-    next: nextPhase.states[headId] ?? 'off', phaseIndex: idx,
+    secToChange: Math.round(a.sec), range: a.range,
+    uncertain: a.actuated || partialFor(phases[idx], headId),
+    next, phaseIndex: idx,
   };
 }
 
 /**
  * Seconds until a head NEXT turns `targetAspect` (its onset), scanning forward
- * from `now`. This is the "green in T seconds" horizon the Live view needs: it
- * answers "when will it change TO green", not "how long until the current phase
- * ends". If the head is already showing the target, secToAspect is 0. Returns
- * null if the plan never shows that aspect for the head.
- *
- * `uncertain` is set when any phase between now and that onset is actuated or
- * partial (an unobserved transition), so the horizon is an estimate, not a clock.
+ * from `now`. This is the "green in T seconds" horizon the Live view needs. If
+ * the head is already showing the target, secToAspect is 0 (see predictHead for
+ * how long it lasts). Returns null if the plan never shows that aspect for it.
+ * `range` is set when that onset is an actuated boundary.
  * @param {TimingPlan} plan
  * @param {string} headId
  * @param {number} now
  * @param {import('../domain/model.js').Aspect} targetAspect
- * @returns {{ secToAspect: number, current: boolean, uncertain: boolean }|null}
+ * @returns {{ secToAspect: number, current: boolean, uncertain: boolean, range: [number,number]|null }|null}
  */
 export function timeToAspect(plan, headId, now, targetAspect = 'green') {
   if (!plan?.stages?.length) return null;
   const phases = plan.stages;
-  if (!phases.some((p) => (p.states[headId] ?? 'off') === targetAspect)) return null;
+  const aspectAt = (i) => phases[i].states[headId] ?? 'off';
+  if (!phases.some((_, i) => aspectAt(i) === targetAspect)) return null;
+  const { idx, elapsed } = locate(phases, cycleTimeMs(plan, now) / 1000);
+  if (aspectAt(idx) === targetAspect) return { secToAspect: 0, current: true, uncertain: false, range: null };
 
-  const len = phases.reduce((s, p) => s + p.timing.sec, 0);
-  if (!len) return null;
-  const t = cycleTimeMs(plan, now) / 1000;
-
-  // locate current phase + offset
-  let acc = 0, idx = 0;
-  for (let i = 0; i < phases.length; i++) {
-    if (t < acc + phases[i].timing.sec || i === phases.length - 1) { idx = i; break; }
-    acc += phases[i].timing.sec;
-  }
-  const aspectOf = (i) => phases[i].states[headId] ?? 'off';
-  if (aspectOf(idx) === targetAspect) return { secToAspect: 0, current: true, uncertain: phases[idx].timing.type === 'actuated' || !!phases[idx].partial };
-
-  // walk forward to the next phase whose aspect is the target (an onset)
-  let remaining = phases[idx].timing.sec - (t - acc);
-  let uncertain = phases[idx].timing.type === 'actuated' || !!phases[idx].partial;
-  for (let step = 1; step <= phases.length; step++) {
-    const j = (idx + step) % phases.length;
-    if (aspectOf(j) === targetAspect) return { secToAspect: Math.round(remaining), current: false, uncertain };
-    if (phases[j].timing.type === 'actuated' || phases[j].partial) uncertain = true;
-    remaining += phases[j].timing.sec;
+  // the target begins at the start of phase j = the end of phase j-1
+  for (let steps = 0; steps < phases.length; steps++) {
+    const j = (idx + steps + 1) % phases.length;
+    if (aspectAt(j) === targetAspect) {
+      const a = arrival(phases, idx, elapsed, steps);
+      return { secToAspect: Math.round(a.sec), current: false, uncertain: a.actuated, range: a.range };
+    }
   }
   return null;
-}
-
-/**
- * Predict for a movement (resolves its head) or the intersection's first
- * signalized movement.
- * @param {Intersection} ix
- * @param {{ movementId?: string, headId?: string, now?: number }} [opts]
- * @returns {Prediction|null}
- */
-export function predictIntersection(ix, opts = {}) {
-  const now = opts.now ?? Date.now();
-  const plan = activePlan(ix.plans, now);
-  if (!plan) return null;
-  let headId = opts.headId;
-  if (!headId && opts.movementId) headId = ix.movements.find((m) => m.id === opts.movementId)?.headId;
-  if (!headId) headId = ix.movements?.find((m) => !m.unsignalized && m.headId)?.headId;
-  if (!headId) return null;
-  return predictHead(plan, headId, now);
 }
