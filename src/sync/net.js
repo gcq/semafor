@@ -1,124 +1,155 @@
-// Serverless peer sync over the free public PeerJS broker + public STUN/TURN.
-// A short room code pairs two devices: the "host" (Create) registers the code as
-// its peer id; the other (Join / scan) connects to it. Then both exchange their
-// whole bundle and reconcile with sync/merge.js — symmetric, so they converge.
+// Serverless sync through the free public ntfy.sh relay, end-to-end encrypted.
 //
-// PeerJS loads from a CDN on first use; the service worker caches it for offline.
-// (We tried Trystero's decentralized backends — torrent/nostr/mqtt — first; all
-// proved unreliable on real networks, so PeerJS's real broker is the only path.)
+// Why not WebRTC any more: a direct peer link needs a TURN relay to cross the
+// car's LTE NAT, and the free public TURN (Open Relay) now requires an account.
+// Plain HTTPS works on every network, so instead each device publishes its whole
+// bundle — gzipped and AES-GCM encrypted with a key derived from the room code —
+// as an ntfy.sh attachment on a topic also derived from the code, and polls that
+// topic for the other device's bundles. The relay only ever sees ciphertext.
+// Messages are cached ~12 h and attachments 3 h, so the two devices don't even
+// need to be online at the same time.
+//
+// Reconciliation is sync/merge.js (symmetric, idempotent). After merging a
+// remote bundle we run the merge in reverse to see whether the OTHER side is
+// missing anything of ours, and only then publish back — so two devices converge
+// in a couple of messages and never ping-pong.
 
 import { mergeBundles } from './merge.js';
 
-const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm';
-export const SYNC_BUILD = 'b24'; // shown in the UI to confirm both devices run the same build
-const PEER_TIMEOUT_MS = 25000;
+const RELAY = 'https://ntfy.sh';
+export const SYNC_BUILD = 'b25'; // shown in the UI to confirm both devices run the same build
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no easily-confused chars
+const CODE_LEN = 16;       // ~79 bits: this is the encryption secret, not just a room name
+const PBKDF2_ITERS = 150000;
+const POLL_MS = 8000;
 
-// Public STUN + free public TURN so the WebRTC media path can form across NATs.
-const STUN = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-  ],
-};
+const utf8 = (s) => new TextEncoder().encode(s);
 
-/**
- * WebRTC self-test: gather ICE candidates to see what the network allows, with
- * no peer needed. host = WebRTC on; srflx = STUN reachable; relay = TURN reachable.
- * Only 'host' means STUN/TURN is blocked (VPN/firewall) and cross-network sync
- * can't work here.
- * @returns {Promise<{ ok: boolean, types: string[], error?: string }>}
- */
-export function webrtcSelfTest() {
-  return new Promise((resolve) => {
-    let pc;
-    try { pc = new RTCPeerConnection(STUN); }
-    catch (e) { resolve({ ok: false, types: [], error: 'RTCPeerConnection unavailable: ' + e.message }); return; }
-    const types = new Set();
-    const finish = () => { try { pc.close(); } catch { /* */ } resolve({ ok: types.size > 0, types: [...types] }); };
-    const timer = setTimeout(finish, 8000);
-    pc.onicecandidate = (e) => {
-      if (!e.candidate) { clearTimeout(timer); finish(); return; }
-      const m = /typ (\w+)/.exec(e.candidate.candidate || '');
-      if (m) types.add(m[1]);
-    };
-    pc.createDataChannel('probe');
-    pc.createOffer().then((o) => pc.setLocalDescription(o))
-      .catch((e) => { clearTimeout(timer); resolve({ ok: false, types: [...types], error: e.message }); });
-  });
-}
-
-/** A short, unambiguous room code (no easily-confused chars). */
-export function makeRoomCode(len = 6) {
-  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let s = '';
+/** A random room code; doubles as the end-to-end key, so it's long. */
+export function makeRoomCode(len = CODE_LEN) {
   const r = crypto.getRandomValues(new Uint8Array(len));
-  for (let i = 0; i < len; i++) s += alphabet[r[i] % alphabet.length];
+  let s = '';
+  for (let i = 0; i < len; i++) s += ALPHABET[r[i] % ALPHABET.length];
   return s;
 }
+export const normalizeCode = (s) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+export const formatCode = (c) => (normalizeCode(c).match(/.{1,4}/g) ?? []).join('-');
+export const isValidCode = (c) => normalizeCode(c).length === CODE_LEN;
 
-let _Peer = null;
-async function loadPeerJS() {
-  if (!_Peer) { const m = await import(/* @vite-ignore */ PEERJS_URL); _Peer = m.Peer || m.default?.Peer || m.default; }
-  return _Peer;
+async function sha256hex(s) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(s)));
+  return [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Public relay topic for a code (a hash: reveals nothing about the key). */
+export async function topicFor(code) {
+  return 'onda-' + (await sha256hex('onda-topic:' + normalizeCode(code))).slice(0, 40);
+}
+
+/** AES-GCM key for a code (PBKDF2-stretched). */
+export async function deriveKey(code) {
+  const base = await crypto.subtle.importKey('raw', utf8(normalizeCode(code)), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: utf8('onda-sync-v1'), iterations: PBKDF2_ITERS, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'],
+  );
+}
+
+const pipe = async (bytes, stream) =>
+  new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+
+/** bundle -> iv(12) ‖ AES-GCM(gzip(JSON)) */
+export async function sealBundle(bundle, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const packed = await pipe(utf8(JSON.stringify(bundle)), new CompressionStream('gzip'));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, packed));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv); out.set(ct, 12);
+  return out;
+}
+
+/** Inverse of sealBundle. Throws if the key is wrong or the bytes were tampered with. */
+export async function openBundle(bytes, key) {
+  const iv = bytes.slice(0, 12);
+  const packed = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, bytes.slice(12)));
+  return JSON.parse(new TextDecoder().decode(await pipe(packed, new DecompressionStream('gzip'))));
+}
+
+const changed = (st) => st.ixAdded + st.ixUpdated + st.ixDeleted + st.obsAdded > 0;
+// Cheap "has my data changed since I last published?" check.
+const fingerprint = (b) => [
+  (b.observations ?? []).length,
+  (b.intersections ?? []).map((i) => `${i.id}:${i.rev ?? 0}:${i.updatedAt ?? 0}`).sort().join(','),
+  (b.tombstones ?? []).length,
+].join('|');
+
 /**
- * Pair with another device by code and reconcile. Host (Create) registers the
- * code as its id; joiner (Join/scan) connects to it.
+ * Join a room and keep syncing until leave(). Symmetric: either device may
+ * start first (or hours later, within the relay's 3 h attachment window).
  * @param {string} code
  * @param {{
  *   getBundle: () => Promise<object>,
  *   applyMerged: (merged: object) => Promise<void>,
  *   onStatus: (msg: string) => void,
- *   onPeers: (n: number) => void,
  *   onSynced: (stats: object) => void,
  * }} handlers
- * @param {boolean} [isHost=false]
  * @returns {Promise<{ leave: () => void }>}
  */
-export async function joinSync(code, handlers, isHost = false) {
-  const { getBundle, applyMerged, onStatus, onPeers, onSynced } = handlers;
-  let Peer;
-  try { onStatus('loading sync…'); Peer = await loadPeerJS(); }
-  catch (e) { onStatus('could not load sync library (need a connection the first time): ' + e.message); throw e; }
+export async function startSync(code, handlers) {
+  const { getBundle, applyMerged, onStatus, onSynced } = handlers;
+  if (!isValidCode(code)) throw new Error(`a code has ${CODE_LEN} letters/digits`);
+  if (!globalThis.crypto?.subtle) throw new Error('sync needs the secure (https://) version of the app');
+  onStatus('preparing encryption…');
+  const [topic, key] = await Promise.all([topicFor(code), deriveKey(code)]);
+  const me = makeRoomCode(10); // this session's sender id, to skip our own messages
+  let stopped = false, timer = null, lastId = null, lastPrint = null;
+  const own = new Set();
 
-  const hostId = ('onda-semafor-' + code).toUpperCase().replace(/[^A-Z0-9-]/g, '');
-  const opts = { config: STUN };
-  let peer, done = false;
+  async function publish() {
+    const bundle = await getBundle();
+    const res = await fetch(`${RELAY}/${topic}`, {
+      method: 'PUT', body: await sealBundle(bundle, key),
+      headers: { 'X-Filename': 'bundle.bin', 'X-Message': me },
+    });
+    if (!res.ok) throw new Error(`relay said ${res.status}`);
+    own.add((await res.json()).id);
+    lastPrint = fingerprint(bundle);
+  }
 
-  const wire = (conn) => {
-    conn.on('open', async () => {
-      onPeers(1); onStatus('connected — exchanging…');
-      try { conn.send(await getBundle()); } catch (e) { onStatus('send failed: ' + e.message); }
-    });
-    conn.on('data', async (remote) => {
-      try {
-        const local = await getBundle();
-        const { merged, stats } = mergeBundles(local, remote);
-        await applyMerged(merged);
-        done = true; onSynced(stats); onStatus('synced ✓');
-      } catch (e) { onStatus('merge failed: ' + e.message); }
-    });
-    conn.on('error', (e) => onStatus('connection error: ' + (e?.type || e?.message || 'unknown')));
+  async function poll() {
+    const res = await fetch(`${RELAY}/${topic}/json?poll=1&since=${lastId ?? 'all'}`);
+    if (!res.ok) throw new Error(`relay said ${res.status}`);
+    const msgs = (await res.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      .filter((m) => m.event === 'message');
+    if (msgs.length) lastId = msgs[msgs.length - 1].id;
+    // Only the newest bundle from each other session matters (each is complete).
+    const latest = new Map();
+    for (const m of msgs) if (!own.has(m.id) && m.message !== me && m.attachment?.url) latest.set(m.message, m);
+    let theyAreBehind = false;
+    for (const m of latest.values()) {
+      let remote;
+      try { remote = await openBundle(new Uint8Array(await (await fetch(m.attachment.url)).arrayBuffer()), key); }
+      catch { continue; } // expired attachment, or not encrypted with our code
+      const local = await getBundle();
+      const { merged, stats } = mergeBundles(local, remote);
+      if (changed(stats)) await applyMerged(merged);
+      if (changed(mergeBundles(remote, local).stats)) theyAreBehind = true;
+      onSynced(stats);
+    }
+    // Publish back if the other side lacks something of ours, or if we have new
+    // data since our last publish (e.g. taps made while the room is open).
+    if (theyAreBehind || fingerprint(await getBundle()) !== lastPrint) await publish();
+  }
+
+  const loop = async () => {
+    if (stopped) return;
+    try { await poll(); onStatus(`in the room — checking every ${POLL_MS / 1000}s`); }
+    catch (e) { onStatus('relay unreachable, retrying… (' + e.message + ')'); }
+    if (!stopped) timer = setTimeout(loop, POLL_MS);
   };
 
-  if (isHost) {
-    peer = new Peer(hostId, opts);
-    peer.on('open', () => onStatus('waiting for the other device to join…'));
-    peer.on('connection', wire);
-  } else {
-    peer = new Peer(opts); // random id
-    peer.on('open', () => { onStatus('connecting to host…'); wire(peer.connect(hostId, { reliable: true })); });
-  }
-  peer.on('error', (e) => {
-    const t = e?.type || '';
-    if (t === 'unavailable-id') onStatus('that code is already hosting elsewhere — pick a new one.');
-    else if (t === 'peer-unavailable') onStatus('no host on that code yet — tap Create on the other device first.');
-    else onStatus('sync error: ' + (t || e?.message || 'unknown'));
-  });
-
-  const watchdog = setTimeout(() => { if (!done) onStatus('still not connected — check both use code ' + code + ', then try again.'); }, PEER_TIMEOUT_MS);
-  return { leave: () => { clearTimeout(watchdog); try { peer.destroy(); } catch { /* noop */ } } };
+  onStatus('sending your data…');
+  try { await publish(); } catch (e) { onStatus('could not reach the relay: ' + e.message); }
+  loop();
+  return { leave: () => { stopped = true; clearTimeout(timer); } };
 }

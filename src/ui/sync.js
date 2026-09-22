@@ -1,8 +1,8 @@
-// Sync tab UI. Create a room (shows a code + QR/URL) or join one; once both
-// devices are in it, data reconciles automatically over WebRTC. DOM only —
-// transport in sync/net.js, reconciliation in sync/merge.js.
+// Sync tab UI. Create a room (shows a code + QR/URL) or join one; both devices
+// then reconcile through the encrypted ntfy.sh relay. DOM only — transport in
+// sync/net.js, reconciliation in sync/merge.js.
 
-import { joinSync, makeRoomCode, webrtcSelfTest, SYNC_BUILD } from '../sync/net.js';
+import { startSync, makeRoomCode, normalizeCode, formatCode, isValidCode, SYNC_BUILD } from '../sync/net.js';
 
 let ctx = null;      // { root, api }
 let session = null;  // { leave }
@@ -16,15 +16,18 @@ export function mountSync(root, api) {
 /** If the app was opened from a scanned sync URL (?sync=CODE), auto-join. */
 export function autoJoinFromUrl() {
   const code = new URLSearchParams(location.search).get('sync');
-  if (code) start(code.toUpperCase(), false);
-  return !!code;
+  if (!code) return false;
+  // The code is the encryption secret: don't leave it in the address bar/history.
+  history.replaceState(null, '', location.pathname);
+  start(code, false);
+  return true;
 }
 
 function render(state = {}) {
   ctx.root.innerHTML = `
     <div class="ed-section">
       <h3>Sync with another device <span class="tag" style="float:right">build ${esc(SYNC_BUILD)}</span></h3>
-      <p class="muted-note" style="margin-top:-4px">Peer-to-peer via a public broker — no server, nothing stored online. Both devices merge: nothing is lost, newest edits win, all observations are kept. <b>Both devices must show the same build.</b></p>
+      <p class="muted-note" style="margin-top:-4px">Works on any network (car LTE included). Data goes through the public ntfy.sh relay <b>end-to-end encrypted</b> with the room code; the relay only sees ciphertext and drops it within 3 h. The other device can join any time in that window. Both sides merge: nothing is lost, newest edits win. <b>Both devices must show the same build.</b></p>
       ${session ? sessionHtml() : idleHtml()}
     </div>
     <div class="ed-section">
@@ -41,10 +44,9 @@ function render(state = {}) {
 function idleHtml() {
   return `
     <button class="sbtn primary" data-act="create" style="width:100%;padding:14px;margin:8px 0">Create a sync room</button>
-    <div class="field"><input id="sync-code-in" placeholder="or enter a code" style="text-transform:uppercase" />
+    <div class="field"><input id="sync-code-in" placeholder="or enter a code (XXXX-XXXX-XXXX-XXXX)" autocapitalize="characters" autocomplete="off" spellcheck="false" style="text-transform:uppercase" />
       <button class="sbtn" data-act="join">Join</button></div>
-    <button class="sbtn" data-act="webrtc-test" style="margin-top:10px">Test WebRTC on this network</button>
-    <div id="sync-webrtc" class="muted-note" style="margin-top:6px"></div>`;
+    <div id="sync-join-err" class="muted-note" style="color:var(--red)"></div>`;
 }
 
 function sessionHtml() {
@@ -53,11 +55,10 @@ function sessionHtml() {
   return `
     <div style="text-align:center">
       ${session.host ? `<div style="margin:6px 0">${qr}</div>
-        <div style="font-size:32px;font-weight:800;letter-spacing:4px">${session.code}</div>
-        <p class="muted-note">On the other device, scan this or tap Join and enter this code.</p>` : ''}
-      ${session.host ? '' : `<p class="muted-note">Joined <b>${session.code}</b> — the other device must show the same code.</p>`}
+        <div style="font-size:24px;font-weight:800;letter-spacing:2px;font-variant-numeric:tabular-nums">${formatCode(session.code)}</div>
+        <p class="muted-note">On the other device, scan this or tap Join and type this code. Keep it private — it's the encryption key.</p>` : ''}
+      ${session.host ? '' : `<p class="muted-note">In room <b>${formatCode(session.code)}</b> — the other device must show the same code.</p>`}
       <div id="sync-status" class="muted-note" style="margin-top:8px">starting…</div>
-      <div id="sync-peers" class="muted-note"></div>
       <div id="sync-result" style="margin-top:8px"></div>
       <div class="row-actions" style="justify-content:center;margin-top:10px">
         <button class="sbtn danger" data-act="leave">Stop sync</button>
@@ -77,21 +78,24 @@ function qrSvg(text) {
 
 async function start(code, host) {
   if (session) session.leave?.();
-  code = code.trim().toUpperCase();
+  code = normalizeCode(code);
   session = { code, host, leave: null };
   render();
   const set = (id, html) => { const n = document.getElementById(id); if (n) n.innerHTML = html; };
+  const total = { ixAdded: 0, ixUpdated: 0, ixDeleted: 0, obsAdded: 0 };
   try {
-    const s = await joinSync(code, {
+    const s = await startSync(code, {
       getBundle: () => ctx.api.getBundle(),
       applyMerged: (m) => ctx.api.applyMerged(m),
       onStatus: (msg) => set('sync-status', esc(msg)),
-      onPeers: (n) => set('sync-peers', n ? `${n} device${n === 1 ? '' : 's'} connected` : ''),
-      onSynced: (st) => set('sync-result',
-        `<div class="verdict linked"><div class="head" style="color:var(--green)">synced ✓</div>
-         <div class="muted-note">+${st.obsAdded} observations, +${st.ixAdded} intersections, ${st.ixUpdated} updated, ${st.ixDeleted} removed</div></div>`),
-    }, host);
-    if (session) session.leave = s.leave;
+      onSynced: (st) => {
+        for (const k of Object.keys(total)) total[k] += st[k] ?? 0;
+        set('sync-result',
+          `<div class="verdict linked"><div class="head" style="color:var(--green)">synced ✓ ${new Date().toLocaleTimeString()}</div>
+           <div class="muted-note">received so far: +${total.obsAdded} observations, +${total.ixAdded} intersections, ${total.ixUpdated} updated, ${total.ixDeleted} removed</div></div>`);
+      },
+    });
+    if (session?.code === code) session.leave = s.leave; else s.leave();
   } catch (e) {
     set('sync-status', 'could not start: ' + esc(e.message));
   }
@@ -102,29 +106,15 @@ function onClick(e) {
   switch (btn.dataset.act) {
     case 'create': start(makeRoomCode(), true); break;
     case 'join': {
-      const code = (document.getElementById('sync-code-in')?.value || '').trim().toUpperCase();
-      if (code) start(code, false); break;
+      const code = document.getElementById('sync-code-in')?.value || '';
+      if (isValidCode(code)) start(code, false);
+      else { const n = document.getElementById('sync-join-err'); if (n) n.textContent = 'A code has 16 letters/digits (dashes optional).'; }
+      break;
     }
     case 'leave': session?.leave?.(); session = null; render(); break;
-    case 'webrtc-test': runWebrtcTest(); break;
     case 'export': doExport(); break;
     case 'import': doImport(); break;
   }
-}
-
-async function runWebrtcTest() {
-  const box = document.getElementById('sync-webrtc'); if (!box) return;
-  box.textContent = 'testing WebRTC…';
-  const r = await webrtcSelfTest();
-  if (r.error) { box.innerHTML = `<span style="color:var(--red)">WebRTC unavailable: ${esc(r.error)}</span>`; return; }
-  const t = r.types;
-  const has = (x) => t.includes(x);
-  let verdict, color;
-  if (!t.length) { verdict = 'WebRTC appears blocked — sync can’t work on this network (VPN/firewall?).'; color = 'var(--red)'; }
-  else if (!has('srflx') && !has('relay')) { verdict = 'Only local candidates — STUN/TURN blocked (very likely a VPN/corporate firewall). P2P won’t connect across networks. Turn off the VPN and retry.'; color = 'var(--red)'; }
-  else if (has('relay')) { verdict = 'TURN reachable ✓ — should connect even across strict networks.'; color = 'var(--green)'; }
-  else { verdict = 'STUN reachable ✓ — should connect on most networks.'; color = 'var(--green)'; }
-  box.innerHTML = `<div>candidates: ${t.map(esc).join(', ') || 'none'}</div><div style="color:${color}">${verdict}</div>`;
 }
 
 async function doExport() {

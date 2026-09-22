@@ -1,6 +1,6 @@
 // Minimal offline cache. Onda has no backend, so caching the shell is enough to
 // make it work with no signal — which is the whole point in a moving car.
-const CACHE = 'onda-v24';
+const CACHE = 'onda-v25';
 const ASSETS = [
   '.', 'index.html', 'manifest.webmanifest',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
@@ -11,7 +11,7 @@ const ASSETS = [
   'src/domain/model.js',
 ];
 // Cross-origin libs we DO want cached for offline (loaded from CDN, not vendored).
-const CDN_HOSTS = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com'];
+const CDN_HOSTS = ['cdnjs.cloudflare.com'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -25,7 +25,7 @@ self.addEventListener('activate', (e) => {
 });
 
 // Network-first for our own assets AND the CDN libs (so both update online and
-// survive offline); everything else (OSM tiles, WebTorrent trackers) passes
+// survive offline); everything else (OSM tiles, the ntfy.sh sync relay) passes
 // straight through and is never cached.
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
