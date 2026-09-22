@@ -5,15 +5,16 @@ import * as store from '../store/db.js';
 import { activePlan, predictHead, timeToAspect } from '../predict/state.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
 import { characterizeIntersection } from '../inference/characterize.js';
-import { uid } from '../domain/model.js';
+import { uid, ASPECT_INFO } from '../domain/model.js';
+import { headLabel } from '../inference/heads.js';
 import { mergeBundles } from '../sync/merge.js';
 import { tapKind } from '../inference/taps.js';
 import { drawScene } from './live-scene.js';
+import { esc, icon, intersectionOptions } from './dom.js';
 import { mountEditor, refreshEditor } from './editor.js';
 import { mountAnalyze, refreshAnalyze } from './analyze.js';
 import { mountSync, autoJoinFromUrl } from './sync.js';
 
-const ASPECT_LABEL = { green: 'Green', 'flash-amber': 'Flashing amber', amber: 'Amber', red: 'Red', off: 'Off' };
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -195,7 +196,7 @@ function renderLive(ix) {
   renderUpcoming(ix);
   $('live-hint').textContent = state.selectedId
     ? 'Manually selected — tap it again to auto-follow GPS.'
-    : (active ? 'Tap a color as it changes. Tap a pole to switch heads.' : '');
+    : (active ? 'Tap a pole in the view to switch lights.' : '');
 }
 
 // Headline: seconds until the active head next turns green (or green time left).
@@ -215,7 +216,7 @@ function renderCountdown(plan, active, now) {
     cap.textContent = pred ? 'actuated light — not predicted' : '';
     return;
   }
-  ind.textContent = ASPECT_LABEL[pred.aspect] ?? '—';
+  ind.textContent = ASPECT_INFO[pred.aspect]?.label ?? '—';
   if (pred.aspect === 'green') {
     num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange;
     cap.textContent = pred.uncertain ? 'green · est. left' : 'green — time left';
@@ -232,9 +233,9 @@ function renderLiveMeta(ix, plan, active) {
   const verdict = active && rec?.headVerdicts?.[active.id];
   const parts = [];
   const conf = plan?.confidence?.level;
-  if (conf) parts.push(`<span class="badge ${conf}">confidence: ${conf}</span>`);
-  if (verdict === 'fixed') parts.push('<span class="badge high">fixed · predictable</span>');
-  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">actuated · not predicted</span>');
+  if (conf) parts.push(`<span class="badge ${conf}">${conf} confidence</span>`);
+  if (verdict === 'fixed') parts.push('<span class="badge high">fixed timing</span>');
+  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">sensor-controlled · not predicted</span>');
   else if (verdict === 'insufficient') parts.push('<span class="badge">need more taps</span>');
   if (active) parts.push(`<span class="badge">${esc(active.label)}</span>`);
   $('meta').innerHTML = parts.join('');
@@ -251,18 +252,9 @@ function renderActiveHead(ix, active) {
   if (state._ahKey === key) return;
   state._ahKey = key;
   box.innerHTML = `
-    <div class="ah-top"><span class="ah-name">${esc(active.label)}</span></div>
-    <div class="ah-lamps">
-      <button class="cap green" data-asp="green">Green</button>
-      <button class="cap yellow" data-asp="amber">Amber</button>
-      <button class="cap red" data-asp="red">Red</button>
-    </div>
-    <div class="ah-more">
-      <button class="cap flashYel small" data-asp="flash-amber">Flashing amber</button>
-      <button class="cap dark small" data-asp="off">Off / dark</button>
-    </div>
-    <p class="ah-hint">First tap on a light records what it shows; tap again the instant it changes.</p>
-    <button class="ah-undo" data-act="undo" ${canUndo ? '' : 'disabled'}>↶ undo last tap</button>`;
+    <div class="ah-name">${esc(active.label)}</div>
+    ${tapPanelHtml({ undo: true, canUndo })}
+    <p class="tap-hint">First tap on a light records what it shows; tap again the instant it changes.</p>`;
   box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, active.id, b.dataset.asp)));
   const u = box.querySelector('[data-act="undo"]');
   if (u) u.onclick = undoLast;
@@ -289,13 +281,19 @@ async function undoLast() {
   tick();
 }
 
-const ASPECT_BTNS = [
-  ['green', 'Green', 'green'], ['amber', 'Amber', 'yellow'],
-  ['flash-amber', 'Flash', 'flashYel'], ['red', 'Red', 'red'], ['off', 'Off', 'dark'],
-];
-function colorButtonsHtml(small) {
-  return ASPECT_BTNS.map(([a, label, cls]) =>
-    `<button class="cap ${cls}${small ? ' small' : ''}" data-aspect="${a}">${label}</button>`).join('');
+// The signal tap panel, shared by Live and Capture so both look and read the same.
+function tapPanelHtml({ undo = false, canUndo = false } = {}) {
+  return `
+    <div class="tap-lamps">
+      <button class="cap green" data-asp="green">Green</button>
+      <button class="cap yellow" data-asp="amber">Amber</button>
+      <button class="cap red" data-asp="red">Red</button>
+    </div>
+    <div class="tap-more">
+      <button class="cap flashYel small" data-asp="flash-amber">Flashing amber</button>
+      <button class="cap dark small" data-asp="off">Off / dark</button>
+    </div>
+    ${undo ? `<div class="tap-undo"><button class="btn quiet" data-act="undo" ${canUndo ? '' : 'disabled'}>${icon('undo')} Undo last tap</button></div>` : ''}`;
 }
 
 // Rows are rebuilt only when the set/selection changes; dots and ETAs are then
@@ -332,9 +330,7 @@ function headsOf(ix) {
   for (const m of ix.movements || []) {
     if (m.unsignalized || !m.headId || seen.has(m.headId)) continue;
     seen.add(m.headId);
-    const h = ix.heads?.find((x) => x.id === m.headId);
-    const label = h?.name || (m.label || `${m.from}→${m.to}`);
-    out.push({ id: m.headId, label });
+    out.push({ id: m.headId, label: headLabel(ix, m.headId) });
   }
   return out;
 }
@@ -350,7 +346,7 @@ function renderCapture() {
     ixSel.dataset.key = ixKey;
     const auto = `Auto — nearest by GPS${!state.selectedId && ix ? ` (${ix.name})` : ''}`;
     ixSel.innerHTML = `<option value="">${esc(auto)}</option>`
-      + state.intersections.map((i) => `<option value="${i.id}" ${i.id === state.selectedId ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
+      + intersectionOptions(state.intersections, state.selectedId);
     ixSel.onchange = () => { state.selectedId = ixSel.value || null; store.setPref('selectedId', state.selectedId); tick(); };
   }
 
@@ -374,8 +370,8 @@ function renderCapture() {
     }
     if (box.dataset.key !== ix.id) {
       box.dataset.key = ix.id;
-      box.innerHTML = colorButtonsHtml(false);
-      box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, state.captureHead.id, b.dataset.aspect)));
+      box.innerHTML = tapPanelHtml();
+      box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, state.captureHead.id, b.dataset.asp)));
     }
   }
 
@@ -471,7 +467,6 @@ function syncApi() {
   };
 }
 
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // You can only watch a light change while you're looking at it: leaving the
 // view (another tab, locking the phone, another app) means the next tap just

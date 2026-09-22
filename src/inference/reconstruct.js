@@ -23,6 +23,7 @@
 const FIXED_CV = 0.15;
 const MAX_CYCLE_SEC = 600;
 const MIN_ONSETS_TO_JUDGE = 3; // below this a head is 'insufficient', not fixed/actuated
+const MIN_PHASE_SEC = 0.75;   // anything shorter between boundaries is jitter, not a phase
 
 // Spanish signal grammar: green → amber → red → green. There is NO red+amber
 // step (that's UK/DE). flash-amber and off are permissive/degraded states that
@@ -200,9 +201,17 @@ export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   const missingHeads = allHeadIds.filter((id) => !observedHeads.includes(id));
   const headVerdicts = Object.fromEntries(hws.map((h) => [h.headId, h.verdict]));
 
-  // union of all boundary positions -> phase partition
-  const bounds = [...new Set(hws.flatMap((h) => h.onsets.map((o) => o.pos)).map((p) => round1(p)))].sort((a, b) => a - b);
-  if (!bounds.length) return null;
+  // union of all boundary positions -> phase partition. Onsets that land a
+  // fraction of a second either side of the fold origin (0 ≡ cycle end), or
+  // right next to another boundary, are the same change seen with jitter — not
+  // a phase: snap them to the origin / merge them, or they'd show up as a
+  // "0.2 s green" sliver. Real phases (amber ~3-4 s, all-red 1-2 s) are longer.
+  const raw = [...new Set(hws.flatMap((h) => h.onsets.map((o) => o.pos)))]
+    .map((b) => (b < MIN_PHASE_SEC || cycleLengthSec - b < MIN_PHASE_SEC ? 0 : b))
+    .sort((a, b) => a - b);
+  if (!raw.length) return null;
+  const bounds = [];
+  for (const b of raw) if (!bounds.length || b - bounds[bounds.length - 1] >= MIN_PHASE_SEC) bounds.push(b);
   if (bounds[0] > 0) bounds.unshift(0);
 
   // A phase is 'actuated' (shown as "sensor" in Analyze) when the boundary that

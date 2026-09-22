@@ -171,3 +171,17 @@ test('actuated heads are never predicted; a fixed head next to one stays exact',
   assert.equal(a.secToChange, null);
   assert.equal(timeToAspect(plan, 'A', t + 50000, 'green').unpredictable, true);
 });
+test('no sliver phases from rounding where the cycle wraps', () => {
+  // green onsets jitter around the fold origin, so their mean lands a fraction
+  // of a second before the cycle end -> used to leave a 0.2 s "green" phase
+  const evs = [];
+  const J = [0, -300, 200, -200, 100, -100];
+  for (let c = 0; c < 6; c++) {
+    const t0 = c * 90000 + J[c];
+    evs.push({ headId: 'A', aspect: 'green', t: t0 }, { headId: 'A', aspect: 'amber', t: t0 + 40000 }, { headId: 'A', aspect: 'red', t: t0 + 44000 });
+  }
+  const rec = reconstructPlan(evs, ['A']);
+  const shortest = Math.min(...rec.phases.map((p) => p.durSec));
+  assert.ok(shortest >= 0.75, `sliver phase of ${shortest}s in ${JSON.stringify(rec.phases.map((p) => p.durSec))}`);
+  assert.equal(rec.phases.length, 3); // green, amber, red
+});

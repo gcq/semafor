@@ -104,7 +104,7 @@ export function drawScene(canvas, scene) {
 
   if (!masts.length) {
     ctx.fillStyle = cssVar('--muted');
-    ctx.font = '13px system-ui, sans-serif';
+    ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Place masts on the map (Edit) to see heads here', jx, jy);
   }

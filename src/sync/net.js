@@ -17,7 +17,6 @@
 import { mergeBundles } from './merge.js';
 
 const RELAY = 'https://ntfy.sh';
-export const SYNC_BUILD = 'b26'; // shown in the UI to confirm both devices run the same build
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 const CODE_LEN = 16;       // ~79 bits: this is the encryption secret, not just a room name
 const PBKDF2_ITERS = 150000;
