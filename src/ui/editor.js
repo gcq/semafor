@@ -71,9 +71,9 @@ function mastIcon(aspects) {
     const dash = a === 'flash-amber' ? 'border-style:dashed;' : '';
     return `<div style="width:16px;height:16px;border-radius:50%;background:${ASPECT_HEX[a] ?? ASPECT_HEX.off};border:2px solid #fff;${dash}"></div>`;
   }).join('');
-  const h = aspects.length * 18 + 4;
-  return L.divIcon({ className: '', iconSize: [20, h], iconAnchor: [10, h / 2],
-    html: `<div style="display:flex;flex-direction:column;gap:2px;align-items:center;padding:2px;background:#2226;border-radius:9px;box-shadow:0 1px 4px #0006">${dots}</div>` });
+  const w = aspects.length * 18 + 4; // a pole's lights in a row, left -> right as you face them
+  return L.divIcon({ className: '', iconSize: [w, 20], iconAnchor: [w / 2, 10],
+    html: `<div style="display:flex;flex-direction:row;gap:2px;align-items:center;padding:2px;background:#2226;border-radius:9px;box-shadow:0 1px 4px #0006">${dots}</div>` });
 }
 
 function defaultPos(center, i, n) {
@@ -243,6 +243,15 @@ function mastsSectionHtml() {
           <input type="checkbox" data-act="mast-head" data-mid="${mast.id}" data-hid="${hid}" style="width:auto" ${mast.headIds.includes(hid) ? 'checked' : ''}/>
           <span class="sg-name" style="flex:1">${esc(headLabel(draft, hid))}</span>
         </label>`).join('')}
+        ${mast.headIds.length > 1 ? `
+          <p class="muted-note" style="margin:8px 0 4px">Order on this pole — left → right as you face it:</p>
+          <div class="row-actions">${mast.headIds.map((hid, i) => `
+            <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:10px;padding:2px 4px">
+              <button class="sbtn" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="move left">◀</button>
+              <span style="font-size:13px">${i + 1}. ${esc(headLabel(draft, hid))}</span>
+              <button class="sbtn" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="1" ${i === mast.headIds.length - 1 ? 'disabled' : ''} aria-label="move right">▶</button>
+            </span>`).join('')}
+          </div>` : ''}
       </div>`).join('')}
     <button class="sbtn" data-act="add-mast">+ Add mast</button>
   </div>`;
@@ -298,7 +307,7 @@ async function onClick(e) {
     case 'new': {
       const loc = ctx.api.gpsNow() ?? { lat: 0, lon: 0 };
       const ix = makeIntersection({ name: 'New intersection', location: loc });
-      await ctx.api.save(ix); editId = ix.id; ctx.api.onChange(); loadDraft(); rerender(); syncMap(); status('Created — add arms, then movements.'); break;
+      await ctx.api.save(ix); editId = ix.id; await ctx.api.onChange(); loadDraft(); rerender(); syncMap(); status('Created — add arms, then movements.'); break;
     }
     case 'delete': if (draft && confirm(`Delete “${draft.name}”?`)) { await ctx.api.remove(draft.id); editId = null; ctx.api.onChange(); refreshEditor(); } break;
     case 'save': return save();
@@ -325,6 +334,13 @@ async function onClick(e) {
       rerender(); break;
     }
     case 'del-mast': draft.masts = draft.masts.filter((m) => m.id !== btn.dataset.mid); rerender(); break;
+    case 'mast-move': {
+      const mast = draft.masts.find((m) => m.id === btn.dataset.mid); if (!mast) break;
+      const i = mast.headIds.indexOf(btn.dataset.hid), j = i + Number(btn.dataset.dir);
+      if (i < 0 || j < 0 || j >= mast.headIds.length) break;
+      [mast.headIds[i], mast.headIds[j]] = [mast.headIds[j], mast.headIds[i]];
+      rerender(); status('Order changed — Save to keep it.'); break;
+    }
   }
 }
 
@@ -334,7 +350,7 @@ async function save() {
   const errs = validateIntersection(draft);
   if (errs.length) { status('Cannot save: ' + errs[0], true); return; }
   await ctx.api.save(structuredClone(draft));
-  ctx.api.onChange();
+  await ctx.api.onChange(); // re-renders the editor, so set the status after
   status('Saved ✓');
 }
 
