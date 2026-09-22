@@ -7,6 +7,7 @@ import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximi
 import { characterizeIntersection } from '../inference/characterize.js';
 import { uid } from '../domain/model.js';
 import { mergeBundles } from '../sync/merge.js';
+import { tapKind } from '../inference/taps.js';
 import { drawScene } from './live-scene.js';
 import { mountEditor, refreshEditor } from './editor.js';
 import { mountAnalyze, refreshAnalyze } from './analyze.js';
@@ -30,7 +31,7 @@ const state = {
   lastIxId: null,          // to reset the manual head pick when the intersection changes
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
-  lastTap: {},             // headId -> { aspect, t } of your last tap (onset vs presence)
+  taps: [],                // your taps this session { id, headId, aspect, t } — the last one decides onset vs presence
 };
 
 // ---------- boot ----------
@@ -250,7 +251,7 @@ function renderActiveHead(ix, active) {
       <button class="cap flashYel small" data-asp="flash-amber">Flashing amber</button>
       <button class="cap dark small" data-asp="off">Off / dark</button>
     </div>
-    <p class="ah-hint">Tap a color the instant it changes. Tapping the current color just logs presence.</p>
+    <p class="ah-hint">First tap on a light records what it shows; tap again the instant it changes.</p>
     <button class="ah-undo" data-act="undo" ${canUndo ? '' : 'disabled'}>↶ undo last tap</button>`;
   box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, active.id, b.dataset.asp)));
   const u = box.querySelector('[data-act="undo"]');
@@ -271,6 +272,8 @@ async function undoLast() {
   const { id, ixId } = state.lastObs;
   await store.deleteObservation(id);
   state.lastObs = null;
+  state.taps = state.taps.filter((t) => t.id !== id); // the tap before it decides the next one again
+  state.captureLog = state.captureLog.filter((l) => l.id !== id);
   const ix = state.intersections.find((i) => i.id === ixId);
   if (ix) await refreshModel(ix);
   tick();
@@ -367,7 +370,7 @@ function renderCapture() {
   }
 
   const log = $('cap-log');
-  const logKey = String(state.captureLog.length);
+  const logKey = `${state.captureLog.length}:${state.captureLog.at(-1)?.id ?? ""}`;
   if (log.dataset.key !== logKey) {
     log.dataset.key = logKey;
     log.innerHTML = state.captureLog.slice(-12).reverse()
@@ -375,35 +378,21 @@ function renderCapture() {
   }
 }
 
-// Is this tap a boundary (onset) or just "it's showing X" (presence)? Only an
-// onset if there's evidence the head was showing something else a moment ago:
-// your previous tap on it (within a max cycle) was a different color, or — with
-// no recent tap — the model says it was showing another color (the re-anchor
-// case). With neither, it's presence: the first "what it shows now" tap of a
-// learning session must never plant a false boundary.
-const TAP_MEMORY_MS = 200000;
-function tapKind(ix, headId, aspect, now) {
-  const last = state.lastTap[headId];
-  if (last && now - last.t <= TAP_MEMORY_MS) return last.aspect === aspect ? 'presence' : 'onset';
-  const plan = livePlanFor(ix, now);
-  const cur = plan ? predictHead(plan, headId, now)?.aspect : null;
-  return cur && cur !== aspect ? 'onset' : 'presence';
-}
-
-// Append one aspect observation for a head. `kind` (onset|presence) is inferred
-// from whether the tapped color matches what the model currently shows.
+// Append one aspect observation for a head. `kind` (onset|presence) comes from
+// your previous tap (see inference/taps.js).
 async function logAspect(intersectionId, headId, aspect, kind) {
   const ix = state.intersections.find((i) => i.id === intersectionId); if (!ix || !headId) return;
-  if (!kind) kind = tapKind(ix, headId, aspect, Date.now());
+  if (!kind) kind = tapKind(state.taps[state.taps.length - 1], headId, aspect, Date.now());
   const ev = {
     id: uid('obs'), intersectionId, headId, aspect, kind, t: Date.now(),
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
   state.lastObs = { id: ev.id, ixId: intersectionId };
-  state.lastTap[headId] = { aspect, t: ev.t };
+  state.taps.push({ id: ev.id, headId, aspect, t: ev.t });
+  if (state.taps.length > 50) state.taps.shift();
   const head = headsOf(ix).find((h) => h.id === headId);
-  state.captureLog.push({ t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
+  state.captureLog.push({ id: ev.id, t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
   await refreshModel(ix);
   renderCapture();
@@ -472,7 +461,15 @@ function syncApi() {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// You can only watch a light change while you're looking at it: leaving the
+// view (another tab, locking the phone, another app) means the next tap just
+// records what it shows again, never a transition you didn't see.
+function stopWatching() { state.taps = []; }
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopWatching(); });
+
 function showView(name) {
+  const current = ['live', 'capture', 'edit', 'analyze', 'sync'].find((v) => $(`view-${v}`).classList.contains('active'));
+  if (current !== name) stopWatching();
   for (const v of ['live', 'capture', 'edit', 'analyze', 'sync']) {
     $(`view-${v}`).classList.toggle('active', name === v);
     $(`tab-${v}`).setAttribute('aria-selected', String(name === v));
