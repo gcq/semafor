@@ -10,10 +10,28 @@
   "theme_color": "#0b0e13",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%230b0e13'/%3E%3Ccircle cx='96' cy='52' r='24' fill='%23ff4d4d'/%3E%3Ccircle cx='96' cy='96' r='24' fill='%23ffcf3f'/%3E%3Ccircle cx='96' cy='140' r='24' fill='%2333d17a'/%3E%3C/svg%3E",
-      "sizes": "192x192",
+      "src": "icons/icon.svg",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    },
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

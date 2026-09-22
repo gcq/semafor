@@ -4,6 +4,7 @@ importScripts('src/version.js'); // defines self.ONDA_VERSION
 const CACHE = 'onda-' + self.ONDA_VERSION;
 const ASSETS = [
   '.', 'index.html', 'manifest.webmanifest', 'src/version.js',
+  'icons/icon.svg', 'icons/favicon-32.png', 'icons/apple-touch-icon.png', 'icons/icon-192.png',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'src/ui/app.js', 'src/ui/live-scene.js', 'src/ui/editor.js', 'src/ui/analyze.js', 'src/ui/sync.js', 'src/store/db.js',
   'src/predict/state.js', 'src/nav/proximity.js',
