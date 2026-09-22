@@ -64,9 +64,13 @@ export function drawScene(canvas, scene) {
   const fl = (en) => ({ f: en.e * Math.sin(th) + en.n * Math.cos(th), l: en.e * Math.cos(th) - en.n * Math.sin(th) });
   const masts = (ix.masts || []).filter((m) => m.pos).map((m) => ({ m, p: fl(toEN(m.pos, c)) }));
   const radiusM = Math.max(15, ...masts.map(({ p }) => Math.hypot(p.f, p.l)));
-  const radiusPx = Math.min(W * 0.36, H * 0.27);
+  // A tall pane (car layout) carries a much bigger countdown on top, so the
+  // junction sits lower; labels scale up with the canvas.
+  const tall = H > 500;
+  const radiusPx = Math.min(W * 0.36, H * (tall ? 0.24 : 0.27));
   const scale = radiusPx / radiusM; // px per metre — fixed on the junction, not on you
-  const jx = W / 2, jy = H * 0.60;
+  const jx = W / 2, jy = H * (tall ? 0.64 : 0.60);
+  const labelPx = W > 500 ? 18 : 12;
   const screen = (p) => ({ x: jx + p.l * scale, y: jy - p.f * scale });
 
   // Ego: true position if it's on screen, otherwise pinned to the bottom edge
@@ -104,7 +108,7 @@ export function drawScene(canvas, scene) {
 
   if (!masts.length) {
     ctx.fillStyle = cssVar('--muted');
-    ctx.font = '14px system-ui, sans-serif';
+    ctx.font = `${labelPx + 2}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillText('Place masts on the map (Edit) to see heads here', jx, jy);
   }
@@ -149,7 +153,7 @@ export function drawScene(canvas, scene) {
     ctx.lineTo(egoPt.x, egoPt.y + 4); ctx.lineTo(egoPt.x + 12, egoPt.y + 12);
     ctx.closePath(); ctx.fill();
     if (egoLabel) {
-      ctx.fillStyle = cssVar('--muted'); ctx.font = '600 12px system-ui, sans-serif';
+      ctx.fillStyle = cssVar('--muted'); ctx.font = `600 ${labelPx}px system-ui, sans-serif`;
       ctx.textAlign = 'left'; ctx.fillText(egoLabel, egoPt.x + 18, egoPt.y + 6);
     }
   }

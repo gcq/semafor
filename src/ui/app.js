@@ -92,9 +92,7 @@ function startGps() {
       // when you tap — so the scene freezes to it instead of spinning.
       if (state.heading != null && state.speed >= 1.5) state.headingFrozen = state.heading;
       state.speed = Number.isFinite(p.coords.speed) ? p.coords.speed : 0;
-      $('gps-sub').textContent = state.speed >= 1.5
-        ? `${Math.round(state.speed * 3.6)} km/h · ${Math.round(state.heading ?? 0)}°`
-        : 'stationary';
+      $('gps-sub').textContent = ''; // only speak up when something's wrong
     },
     () => { $('gps-sub').textContent = 'GPS blocked — pick manually'; },
     { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 },
@@ -203,6 +201,9 @@ function renderLive(ix) {
 // Actuated heads get no number at all: their timing isn't predictable.
 function renderCountdown(plan, active, now) {
   const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label');
+  // The number takes the current light's color, so it reads at a glance.
+  const tint = (aspect) => { $('count').dataset.aspect = aspect ?? ''; };
+  tint(null);
   if (!plan || !active) {
     ind.textContent = plan ? '—' : 'learning';
     num.textContent = '--';
@@ -217,6 +218,7 @@ function renderCountdown(plan, active, now) {
     return;
   }
   ind.textContent = ASPECT_INFO[pred.aspect]?.label ?? '—';
+  tint(pred.aspect);
   if (pred.aspect === 'green') {
     num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange;
     cap.textContent = pred.uncertain ? 'green · est. left' : 'green — time left';
