@@ -192,9 +192,7 @@ function renderLive(ix) {
   renderLiveMeta(ix, plan, active);
   renderActiveHead(ix, active);
   renderUpcoming(ix);
-  $('live-hint').textContent = state.selectedId
-    ? 'Manually selected — tap it again to auto-follow GPS.'
-    : (active ? 'Tap a pole in the view to switch lights.' : '');
+  $('live-hint').textContent = state.selectedId ? 'Manually selected — tap it again to auto-follow GPS.' : '';
 }
 
 // Headline: seconds until the active head next turns green (or green time left).
@@ -205,29 +203,29 @@ function renderCountdown(plan, active, now) {
   const tint = (aspect) => { $('count').dataset.aspect = aspect ?? ''; };
   tint(null);
   if (!plan || !active) {
-    ind.textContent = plan ? '—' : 'learning';
+    ind.textContent = plan ? '—' : 'Learning';
     num.textContent = '--';
     cap.textContent = plan ? '' : 'tap colors to learn';
     return;
   }
   const pred = predictHead(plan, active.id, now);
   if (!pred || pred.unpredictable) {
-    ind.textContent = pred ? 'sensor-controlled' : '—';
+    ind.textContent = pred ? 'Sensor-controlled' : '—';
     num.textContent = '--';
-    cap.textContent = pred ? 'actuated light — not predicted' : '';
+    cap.textContent = pred ? 'not predicted' : '';
     return;
   }
   ind.textContent = ASPECT_INFO[pred.aspect]?.label ?? '—';
   tint(pred.aspect);
   if (pred.aspect === 'green') {
-    num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange;
-    cap.textContent = pred.uncertain ? 'green · est. left' : 'green — time left';
+    num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange; // ~ = estimate
+    cap.textContent = 'left';
     return;
   }
   const tg = timeToAspect(plan, active.id, now, 'green');
-  if (!tg || tg.unpredictable) { num.textContent = '--'; cap.textContent = tg ? 'actuated light — not predicted' : 'no green in model'; return; }
+  if (!tg || tg.unpredictable) { num.textContent = '--'; cap.textContent = tg ? 'not predicted' : 'no green in model'; return; }
   num.textContent = pred.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
-  cap.textContent = pred.uncertain ? 'to green · estimate' : 'to green';
+  cap.textContent = 'until green';
 }
 
 function renderLiveMeta(ix, plan, active) {
@@ -237,9 +235,7 @@ function renderLiveMeta(ix, plan, active) {
   const conf = plan?.confidence?.level;
   if (conf) parts.push(`<span class="badge ${conf}">${conf} confidence</span>`);
   if (verdict === 'fixed') parts.push('<span class="badge high">fixed timing</span>');
-  else if (verdict === 'actuated') parts.push('<span class="badge uncertain">sensor-controlled · not predicted</span>');
-  else if (verdict === 'insufficient') parts.push('<span class="badge">need more taps</span>');
-  if (active) parts.push(`<span class="badge">${esc(active.label)}</span>`);
+  else if (verdict === 'insufficient') parts.push('<span class="badge">needs more taps</span>');
   $('meta').innerHTML = parts.join('');
 }
 
@@ -255,8 +251,7 @@ function renderActiveHead(ix, active) {
   state._ahKey = key;
   box.innerHTML = `
     <div class="ah-name">${esc(active.label)}</div>
-    ${tapPanelHtml({ undo: true, canUndo })}
-    <p class="tap-hint">First tap on a light records what it shows; tap again the instant it changes.</p>`;
+    ${tapPanelHtml({ undo: true, canUndo, poles: true })}`;
   box.querySelectorAll('.cap').forEach((b) => (b.onclick = () => logAspect(ix.id, active.id, b.dataset.asp)));
   const u = box.querySelector('[data-act="undo"]');
   if (u) u.onclick = undoLast;
@@ -283,8 +278,11 @@ async function undoLast() {
   tick();
 }
 
+// The one tapping instruction (Live and Capture used to word it differently).
+const TAP_HINT = 'Tap the color when you start watching a light, then again the instant it changes — the first tap only records what it shows.';
+
 // The signal tap panel, shared by Live and Capture so both look and read the same.
-function tapPanelHtml({ undo = false, canUndo = false } = {}) {
+function tapPanelHtml({ undo = false, canUndo = false, poles = false } = {}) {
   return `
     <div class="tap-lamps">
       <button class="cap green" data-asp="green">Green</button>
@@ -295,7 +293,8 @@ function tapPanelHtml({ undo = false, canUndo = false } = {}) {
       <button class="cap flashYel small" data-asp="flash-amber">Flashing amber</button>
       <button class="cap dark small" data-asp="off">Off / dark</button>
     </div>
-    ${undo ? `<div class="tap-undo"><button class="btn quiet" data-act="undo" ${canUndo ? '' : 'disabled'}>${icon('undo')} Undo last tap</button></div>` : ''}`;
+    ${undo ? `<div class="tap-undo"><button class="btn quiet" data-act="undo" ${canUndo ? '' : 'disabled'}>${icon('undo')} Undo last tap</button></div>` : ''}
+    <p class="tap-hint">${TAP_HINT}${poles ? ' Tap a pole in the view to switch lights.' : ''}</p>`;
 }
 
 // Rows are rebuilt only when the set/selection changes; dots and ETAs are then

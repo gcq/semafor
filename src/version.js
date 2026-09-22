@@ -2,4 +2,4 @@
 // script so both the page (<script>) and the service worker (importScripts)
 // can read it; the SW's cache name and the in-app "update available" check
 // both key off it.
-self.ONDA_VERSION = 'v33';
+self.ONDA_VERSION = 'v34';
