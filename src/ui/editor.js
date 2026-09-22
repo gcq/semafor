@@ -137,7 +137,6 @@ function rerender() {
   reconcile();
   const p = plan();
   const N = p?.stages?.length ?? 0;
-  const lights = headIds();
   ctx.root.innerHTML = `
     <div class="card">
       <div class="field"><label for="ed-pick">Editing</label>
@@ -180,19 +179,6 @@ function rerender() {
       ${draft.arms.length >= 2 ? `<button class="btn" data-act="add-move">${icon('plus')} Add movement</button>` : ''}
     </div>
 
-    <div class="card">
-      <h3>Lights (${lights.length})</h3>
-      ${lights.map((hid) => {
-        const h = draft.heads.find((x) => x.id === hid) || { id: hid };
-        const movs = movementsOfHead(draft, hid).map((m) => `${armName(m.from)} → ${armName(m.to)}`).join(', ');
-        return `<div class="light-row">
-          <span class="swatch" style="background:${ASPECT_HEX[headAspect(hid)]}"></span>
-          <input data-act="head-name" data-id="${hid}" value="${esc(h.name || '')}" placeholder="Light name" />
-          <span class="note ellipsis">${esc(movs)}</span>
-        </div>`;
-      }).join('') || '<p class="note">Lights appear as you add movements.</p>'}
-    </div>
-
     ${mastsSectionHtml()}
 
     <div class="save-bar${dirty ? ' dirty' : ''}" id="ed-savebar">
@@ -226,34 +212,46 @@ function movementHtml(m, i) {
   </div>`;
 }
 
+// Poles and the lights on them — the one place lights are named and placed
+// (it used to be a Lights list plus a pole × light checkbox grid). Which light
+// controls which movement is set on the movement rows above.
 function mastsSectionHtml() {
   const hids = headIds();
   if (!hids.length) return '';
+  const poleCount = (hid) => draft.masts.filter((m) => m.headIds.includes(hid)).length;
+  const lightRow = (mast, hid, i) => {
+    const h = draft.heads.find((x) => x.id === hid) || { id: hid };
+    const movs = movementsOfHead(draft, hid).map((m) => `${armName(m.from)} → ${armName(m.to)}`).join(', ');
+    const last = mast.headIds.length - 1;
+    const onlyPole = poleCount(hid) === 1;
+    return `<div class="light-row">
+      <span class="swatch" style="background:${ASPECT_HEX[headAspect(hid)]}"></span>
+      <input data-act="head-name" data-id="${hid}" value="${esc(h.name || '')}" placeholder="Light name" />
+      <span class="note ellipsis">${esc(movs) || 'no movements'}</span>
+      ${last > 0 ? `
+        <button class="btn icon" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move left">${icon('left')}</button>
+        <button class="btn icon" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="1" ${i === last ? 'disabled' : ''} aria-label="Move right">${icon('right')}</button>` : ''}
+      <button class="btn icon" data-act="mast-remove" data-mid="${mast.id}" data-hid="${hid}" ${onlyPole ? 'disabled title="A light needs a pole: add it to another pole first"' : ''} aria-label="Remove from this pole">${icon('close')}</button>
+    </div>`;
+  };
   return `<div class="card">
-    <h3>Poles on the map (${draft.masts.length})</h3>
-    <p class="note small">Tick which lights each pole carries. One light on two poles (e.g. a median) is fine.</p>
-    ${draft.masts.map((mast, mi) => `
-      <div class="sub-card">
+    <h3>Poles and lights</h3>
+    <p class="note small">Each pole is a marker on the map; drag it into place. Name its lights here, in order from left to right as you face the pole. One light can hang on two poles (e.g. a median).</p>
+    ${draft.masts.map((mast, mi) => {
+      const addable = hids.filter((hid) => !mast.headIds.includes(hid));
+      return `<div class="sub-card">
         <div class="pole-head">
-          <span class="idx">${mi + 1}</span>
-          <span class="note">${mast.headIds.length} light${mast.headIds.length === 1 ? '' : 's'}</span>
+          <span class="note">Pole ${mi + 1}</span>
           <button class="btn" data-act="dup-mast" data-mid="${mast.id}">Duplicate</button>
           <button class="btn icon danger" data-act="del-mast" data-mid="${mast.id}" aria-label="Remove pole">${icon('close')}</button>
         </div>
-        ${hids.map((hid) => `<label class="check">
-          <input type="checkbox" data-act="mast-head" data-mid="${mast.id}" data-hid="${hid}" ${mast.headIds.includes(hid) ? 'checked' : ''}/>
-          <span>${esc(headLabel(draft, hid))}</span>
-        </label>`).join('')}
-        ${mast.headIds.length > 1 ? `
-          <p class="note small">Order on this pole — left to right as you face it:</p>
-          <div class="actions">${mast.headIds.map((hid, i) => `
-            <span class="order">
-              <button class="btn icon" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move left">${icon('left')}</button>
-              <span>${i + 1}. ${esc(headLabel(draft, hid))}</span>
-              <button class="btn icon" data-act="mast-move" data-mid="${mast.id}" data-hid="${hid}" data-dir="1" ${i === mast.headIds.length - 1 ? 'disabled' : ''} aria-label="Move right">${icon('right')}</button>
-            </span>`).join('')}
-          </div>` : ''}
-      </div>`).join('')}
+        ${mast.headIds.map((hid, i) => lightRow(mast, hid, i)).join('')}
+        ${addable.length ? `<select class="add-light" data-act="mast-add" data-mid="${mast.id}" aria-label="Add a light to this pole">
+          <option value="">Add a light to this pole…</option>
+          ${addable.map((hid) => `<option value="${hid}">${esc(headLabel(draft, hid))}</option>`).join('')}
+        </select>` : ''}
+      </div>`;
+    }).join('')}
     <button class="btn" data-act="add-mast">${icon('plus')} Add pole</button>
   </div>`;
 }
@@ -266,7 +264,12 @@ function onInput(e) {
     case 'name': draft.name = el.value; break;
     case 'arm-name': { const a = draft.arms.find((x) => x.id === el.dataset.id); if (a) a.name = el.value; break; }
     case 'mv-label': draft.movements[i].label = el.value; break;
-    case 'head-name': { const h = draft.heads.find((x) => x.id === el.dataset.id); if (h) h.name = el.value; break; }
+    case 'head-name': {
+      const h = draft.heads.find((x) => x.id === el.dataset.id); if (h) h.name = el.value;
+      // a light on two poles has two name fields: keep them in step
+      ctx.root.querySelectorAll(`[data-act="head-name"][data-id="${el.dataset.id}"]`).forEach((o) => { if (o !== el) o.value = el.value; });
+      break;
+    }
     default: return;
   }
   markDirty();
@@ -291,11 +294,9 @@ function onChange(e) {
       else draft.movements[i].headId = el.value;
       ensureHeadsForMovements(draft, () => uid('head'), (k) => `Light ${k + 1}`); rerender(); break;
     }
-    case 'mast-head': {
-      const mast = draft.masts.find((m) => m.id === el.dataset.mid); if (!mast) break;
-      const hid = el.dataset.hid;
-      if (el.checked) { if (!mast.headIds.includes(hid)) mast.headIds.push(hid); }
-      else mast.headIds = mast.headIds.filter((k) => k !== hid);
+    case 'mast-add': {
+      const mast = draft.masts.find((m) => m.id === el.dataset.mid);
+      if (mast && el.value && !mast.headIds.includes(el.value)) mast.headIds.push(el.value);
       rerender(); break;
     }
   }
@@ -305,9 +306,9 @@ function onChange(e) {
 async function onClick(e) {
   const btn = e.target.closest('[data-act]'); if (!btn) return;
   const act = btn.dataset.act, i = Number(btn.dataset.i);
-  if (['name','arm-name','mv-label','head-name','edit-pick','mv-from','mv-to','mv-kind','mv-unsig','mv-head','mast-head'].includes(act)) return;
+  if (['name','arm-name','mv-label','head-name','edit-pick','mv-from','mv-to','mv-kind','mv-unsig','mv-head','mast-add'].includes(act)) return;
   const N = (draft && plan()?.stages?.length) || 1;
-  const edits = ['use-gps', 'add-arm', 'del-arm', 'add-move', 'del-move', 'add-mast', 'dup-mast', 'del-mast', 'mast-move'];
+  const edits = ['use-gps', 'add-arm', 'del-arm', 'add-move', 'del-move', 'add-mast', 'dup-mast', 'del-mast', 'mast-move', 'mast-remove'];
   if (edits.includes(act)) dirty = true;
   switch (act) {
     case 'phase-prev': previewPhase = (previewPhase - 1 + N) % N; rerender(); break;
@@ -343,6 +344,14 @@ async function onClick(e) {
       rerender(); break;
     }
     case 'del-mast': draft.masts = draft.masts.filter((m) => m.id !== btn.dataset.mid); rerender(); break;
+    case 'mast-remove': {
+      const mast = draft.masts.find((m) => m.id === btn.dataset.mid); if (!mast) break;
+      const hid = btn.dataset.hid;
+      if (draft.masts.filter((m) => m.headIds.includes(hid)).length < 2) break; // never orphan a light
+      mast.headIds = mast.headIds.filter((k) => k !== hid);
+      if (!mast.headIds.length) draft.masts = draft.masts.filter((m) => m !== mast); // empty pole goes away
+      rerender(); break;
+    }
     case 'mast-move': {
       const mast = draft.masts.find((m) => m.id === btn.dataset.mid); if (!mast) break;
       const i = mast.headIds.indexOf(btn.dataset.hid), j = i + Number(btn.dataset.dir);
