@@ -36,17 +36,17 @@ const LEGAL_NEXT = {
   'flash-amber': ['green', 'amber', 'red', 'off'],
   off: ['green', 'amber', 'red', 'flash-amber'],
 };
-const isLegalNext = (a, b) => a === b || (LEGAL_NEXT[a] ?? []).includes(b);
+export const isLegalNext = (a, b) => a === b || (LEGAL_NEXT[a] ?? []).includes(b);
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
 const round1 = (x) => Math.round(x * 10) / 10;
-const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+export const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 
 // Circular distance between two ring positions (0..period), 0..period/2.
 const circDist = (a, b, period) => { const d = Math.abs(a - b) % period; return Math.min(d, period - d); };
 
 // Circular statistics on a ring of length `period` (positions wrap at 0≡period).
-function circMean(vals, period) {
+export function circMean(vals, period) {
   let sx = 0, sy = 0;
   for (const v of vals) { const a = (v / period) * 2 * Math.PI; sx += Math.cos(a); sy += Math.sin(a); }
   const ang = Math.atan2(sy / vals.length, sx / vals.length);
@@ -60,7 +60,7 @@ function circSpread(vals, period) {
 }
 
 /** Group events by head, each list sorted by time. */
-function byHead(events) {
+export function byHead(events) {
   const g = {};
   for (const e of events) (g[e.headId] ??= []).push(e);
   for (const k of Object.keys(g)) g[k].sort((a, b) => a.t - b.t);
@@ -170,6 +170,7 @@ function aspectAt(hw, pos) {
  * regime). Returns null if no cycle can be found.
  * @param {Ev[]} events
  * @param {string[]} allHeadIds   structural heads (for coverage reporting)
+ * @param {{ cycleSec?: number }} [opts]  force the cycle (sessions already aligned on it)
  * @returns {null | {
  *   cycleLengthSec: number, epoch: number, phases: Array<{ startSec: number, durSec: number, states: Record<string,Aspect>, type: 'fixed'|'actuated' }>,
  *   headWindows: HeadWindows[], observedHeads: string[], missingHeads: string[],
@@ -180,18 +181,12 @@ function aspectAt(hw, pos) {
 export function reconstructPlan(events, allHeadIds = [], opts = {}) {
   if (!events?.length) return null;
 
-  // Recent-window re-anchor: fold only recent events so a stale epoch or slow
-  // drift can't smear the fold (see the TeslaMate long-span analysis). Falls
-  // back to the full log if the window is too sparse to reconstruct from.
-  let used = events;
-  if (opts.recentWindowMs) {
-    const now = opts.now ?? Math.max(...events.map((e) => e.t));
-    const recent = events.filter((e) => e.t >= now - opts.recentWindowMs);
-    if (recent.length >= 2) used = recent;
-  }
-
+  // Multi-day logs are NOT folded here on one clock (a session-precise cycle
+  // smears over hundreds of cycles): inference/plans.js aligns sessions first
+  // and passes the plan's cycle in `opts.cycleSec`.
+  const used = events;
   const heads = byHead(used);
-  const cycleLengthSec = estimateCycleSec(heads);
+  const cycleLengthSec = opts.cycleSec ?? estimateCycleSec(heads);
   if (!cycleLengthSec) return null;
   const epoch = Math.min(...used.filter((e) => e.kind !== 'presence').map((e) => e.t));
   if (!Number.isFinite(epoch)) return null;

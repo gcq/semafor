@@ -8,7 +8,6 @@ import { characterizeIntersection } from '../inference/characterize.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
 import { mergeBundles } from '../sync/merge.js';
-import { tapKind } from '../inference/taps.js';
 import { drawScene } from './live-scene.js';
 import { esc, icon, intersectionOptions } from './dom.js';
 import { mountEditor, refreshEditor } from './editor.js';
@@ -32,7 +31,6 @@ const state = {
   lastIxId: null,          // to reset the manual head pick when the intersection changes
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
-  taps: [],                // your taps this session { id, headId, aspect, t } — the last one decides onset vs presence
 };
 
 // ---------- boot ----------
@@ -49,7 +47,7 @@ const state = {
   safe('sync', () => mountSync(document.getElementById('sync-root'), syncApi()));
   registerSW();
   await refreshAllModels();
-  setInterval(refreshAllModels, 60000); // the recent window slides with the clock
+  setInterval(refreshAllModels, 60000); // plan windows and drift ± move with the clock
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
@@ -188,7 +186,7 @@ function renderLive(ix) {
   const canvas = $('live-scene');
   if (canvas && canvas.clientWidth) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
 
-  renderCountdown(plan, active, now);
+  renderCountdown(ix, plan, active, now);
   renderLiveMeta(ix, plan, active);
   renderActiveHead(ix, active);
   renderUpcoming(ix);
@@ -196,45 +194,54 @@ function renderLive(ix) {
 }
 
 // Headline: seconds until the active head next turns green (or green time left).
-// Actuated heads get no number at all: their timing isn't predictable.
-function renderCountdown(plan, active, now) {
+// Timing drift never hides it: a guess is marked "~" with its ± range. Sensor
+// (actuated) lights are the exception — not predicted at all.
+function renderCountdown(ix, plan, active, now) {
   const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label');
   // The number takes the current light's color, so it reads at a glance.
   const tint = (aspect) => { $('count').dataset.aspect = aspect ?? ''; };
   tint(null);
-  if (!plan || !active) {
-    ind.textContent = plan ? '—' : 'Learning';
-    num.textContent = '--';
-    cap.textContent = plan ? '' : 'tap colors to learn';
+  if (!active) { ind.textContent = '—'; num.textContent = '--'; cap.textContent = ''; return; }
+  if (!plan || !plan.stages.some((st) => active.id in st.states)) {
+    // No timing for this light yet: echo your last tap on it so a tap is felt at once.
+    const last = state.models[ix.id]?.lastTaps?.[active.id];
+    if (last && now - last.t < LAST_TAP_ECHO_MS) {
+      ind.textContent = ASPECT_INFO[last.aspect]?.label ?? '—';
+      tint(last.aspect);
+      num.textContent = Math.round((now - last.t) / 1000);
+      cap.textContent = 's since your tap · no timing yet';
+    } else { ind.textContent = 'Learning'; num.textContent = '--'; cap.textContent = plan ? 'no taps on this light yet' : 'tap colors to learn'; }
     return;
   }
+  const rel = plan.reliability;
   const pred = predictHead(plan, active.id, now);
   if (!pred || pred.unpredictable) {
-    ind.textContent = pred ? 'Sensor-controlled' : '—';
-    num.textContent = '--';
-    cap.textContent = pred ? 'not predicted' : '';
+    ind.textContent = pred ? 'Sensor-controlled' : '—'; num.textContent = '--'; cap.textContent = pred ? 'not predicted' : '';
     return;
   }
+  const guess = pred.uncertain || (rel && rel.level !== 'high');
+  const pm = rel && rel.sigmaSec >= 2 ? ` · ±${Math.round(rel.sigmaSec)}s` : '';
   ind.textContent = ASPECT_INFO[pred.aspect]?.label ?? '—';
   tint(pred.aspect);
-  if (pred.aspect === 'green') {
-    num.textContent = pred.uncertain ? `~${pred.secToChange}` : pred.secToChange; // ~ = estimate
-    cap.textContent = 'left';
-    return;
-  }
+  const show = (sec) => `${guess ? '~' : ''}${sec}`;
+  if (pred.aspect === 'green') { num.textContent = show(pred.secToChange); cap.textContent = `left${pm}`; return; }
   const tg = timeToAspect(plan, active.id, now, 'green');
-  if (!tg || tg.unpredictable) { num.textContent = '--'; cap.textContent = tg ? 'not predicted' : 'no green in model'; return; }
-  num.textContent = pred.uncertain ? `~${tg.secToAspect}` : tg.secToAspect;
-  cap.textContent = 'until green';
+  if (!tg || tg.unpredictable) { num.textContent = show(pred.secToChange); cap.textContent = `until it changes${pm}`; return; }
+  num.textContent = show(tg.secToAspect);
+  cap.textContent = `until green${pm}`;
 }
 
+const LAST_TAP_ECHO_MS = 10 * 60 * 1000;
+const RELIABILITY = { high: 'reliable', medium: 'rough', low: 'unreliable' };
+
 function renderLiveMeta(ix, plan, active) {
-  const rec = state.models[ix.id]?.rec;
-  const verdict = active && rec?.headVerdicts?.[active.id];
+  const verdict = active && state.models[ix.id]?.rec?.headVerdicts?.[active.id];
+  const rel = plan?.reliability;
   const parts = [];
-  const conf = plan?.confidence?.level;
-  if (conf) parts.push(`<span class="badge ${conf}">${conf} confidence</span>`);
-  if (verdict === 'fixed') parts.push('<span class="badge high">fixed timing</span>');
+  if (rel) parts.push(`<span class="badge ${rel.level}" title="${esc(rel.reasons.join(' · '))}">${RELIABILITY[rel.level]}</span>`,
+    `<span class="badge">${esc(rel.reasons[rel.reasons.length - 1])}</span>`); // warnings come last
+  else if (plan?.confidence?.level) parts.push(`<span class="badge ${plan.confidence.level}">${plan.confidence.level} confidence</span>`);
+  if (verdict === 'actuated') parts.push('<span class="badge uncertain">sensor · not predicted</span>');
   else if (verdict === 'insufficient') parts.push('<span class="badge">needs more taps</span>');
   $('meta').innerHTML = parts.join('');
 }
@@ -271,7 +278,6 @@ async function undoLast() {
   const { id, ixId } = state.lastObs;
   await store.deleteObservation(id);
   state.lastObs = null;
-  state.taps = state.taps.filter((t) => t.id !== id); // the tap before it decides the next one again
   state.captureLog = state.captureLog.filter((l) => l.id !== id);
   const ix = state.intersections.find((i) => i.id === ixId);
   if (ix) await refreshModel(ix);
@@ -279,7 +285,8 @@ async function undoLast() {
 }
 
 // The one tapping instruction (Live and Capture used to word it differently).
-const TAP_HINT = 'Tap the color when you start watching a light, then again the instant it changes — the first tap only records what it shows.';
+// Every tap means one thing: the light just changed to this color.
+const TAP_HINT = 'Tap a color only at the instant the light changes to it — never to say what it shows now.';
 
 // The signal tap panel, shared by Live and Capture so both look and read the same.
 function tapPanelHtml({ undo = false, canUndo = false, poles = false } = {}) {
@@ -385,21 +392,17 @@ function renderCapture() {
   }
 }
 
-// Append one aspect observation for a head. `kind` (onset|presence) comes from
-// your previous tap (see inference/taps.js).
-async function logAspect(intersectionId, headId, aspect, kind) {
+// Append one aspect observation for a head: it just changed to `aspect`.
+async function logAspect(intersectionId, headId, aspect) {
   const ix = state.intersections.find((i) => i.id === intersectionId); if (!ix || !headId) return;
-  if (!kind) kind = tapKind(state.taps[state.taps.length - 1], headId, aspect, Date.now());
   const ev = {
-    id: uid('obs'), intersectionId, headId, aspect, kind, t: Date.now(),
+    id: uid('obs'), intersectionId, headId, aspect, kind: 'onset', t: Date.now(),
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
   state.lastObs = { id: ev.id, ixId: intersectionId };
-  state.taps.push({ id: ev.id, headId, aspect, t: ev.t });
-  if (state.taps.length > 50) state.taps.shift();
   const head = headsOf(ix).find((h) => h.id === headId);
-  state.captureLog.push({ id: ev.id, t: ev.t, aspect: kind === 'presence' ? `${aspect} (now)` : aspect, head: head?.label ?? headId, ix: ix.name });
+  state.captureLog.push({ id: ev.id, t: ev.t, aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
   await refreshModel(ix);
   renderCapture();
@@ -469,15 +472,7 @@ function syncApi() {
 }
 
 
-// You can only watch a light change while you're looking at it: leaving the
-// view (another tab, locking the phone, another app) means the next tap just
-// records what it shows again, never a transition you didn't see.
-function stopWatching() { state.taps = []; }
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopWatching(); });
-
 function showView(name) {
-  const current = ['live', 'capture', 'edit', 'analyze', 'sync'].find((v) => $(`view-${v}`).classList.contains('active'));
-  if (current !== name) stopWatching();
   for (const v of ['live', 'capture', 'edit', 'analyze', 'sync']) {
     $(`view-${v}`).classList.toggle('active', name === v);
     $(`tab-${v}`).setAttribute('aria-selected', String(name === v));

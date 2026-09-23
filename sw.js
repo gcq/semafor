@@ -8,7 +8,7 @@ const ASSETS = [
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'src/ui/app.js', 'src/ui/dom.js', 'src/ui/live-scene.js', 'src/ui/editor.js', 'src/ui/analyze.js', 'src/ui/sync.js', 'src/store/db.js',
   'src/predict/state.js', 'src/nav/proximity.js',
-  'src/inference/reconstruct.js', 'src/inference/characterize.js', 'src/inference/taps.js', 'src/inference/heads.js',
+  'src/inference/reconstruct.js', 'src/inference/plans.js', 'src/inference/characterize.js', 'src/inference/heads.js',
   'src/sync/merge.js', 'src/sync/net.js',
   'src/domain/model.js',
 ];

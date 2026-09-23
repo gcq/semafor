@@ -138,15 +138,10 @@ test('timeToAspect gives seconds until a head next turns green', () => {
   assert.equal(timeToAspect(plan, 'B', epoch + 20000, 'green').secToAspect, 30);
 });
 
-test('recent-window re-anchor folds only recent events', () => {
-  // old drifted junk far in the past + a clean recent run; window keeps the run
-  const old = [{ headId: 'A', aspect: 'green', t: 0 }, { headId: 'A', aspect: 'green', t: 37000 }];
-  const recent = [];
-  const base = 10_000_000;
-  for (let c = 0; c < 6; c++) recent.push({ headId: 'A', aspect: 'green', t: base + c * 90000 });
-  const rec = reconstructPlan([...old, ...recent], ['A'], { recentWindowMs: 700000, now: base + 5 * 90000 });
+test('a forced cycle folds on it instead of estimating one', () => {
+  const rec = reconstructPlan(genEvents(6), ['A', 'B'], { cycleSec: 90 });
   assert.equal(rec.cycleLengthSec, 90);
-  assert.ok(rec.epoch >= base); // re-anchored to the recent run
+  assert.equal(reconstructPlan([{ headId: 'A', aspect: 'green', t: 0 }], ['A'], { cycleSec: 90 }).cycleLengthSec, 90);
 });
 
 test('countdown runs to the head\'s own color change, across other heads\' boundaries', () => {
