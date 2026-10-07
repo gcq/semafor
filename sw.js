@@ -7,8 +7,8 @@ const ASSETS = [
   'icons/icon.svg', 'icons/favicon-32.png', 'icons/apple-touch-icon.png', 'icons/icon-192.png',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'src/ui/app.js', 'src/ui/dom.js', 'src/ui/live-scene.js', 'src/ui/editor.js', 'src/ui/analyze.js', 'src/ui/sync.js', 'src/store/db.js',
-  'src/predict/state.js', 'src/nav/proximity.js',
-  'src/inference/reconstruct.js', 'src/inference/plans.js', 'src/inference/characterize.js', 'src/inference/heads.js',
+  'src/predict/state.js', 'src/predict/next.js', 'src/nav/proximity.js',
+  'src/inference/reconstruct.js', 'src/inference/plans.js', 'src/inference/characterize.js', 'src/inference/heads.js', 'src/inference/clock.js', 'src/inference/worker.js',
   'src/sync/merge.js', 'src/sync/net.js',
   'src/domain/model.js',
 ];

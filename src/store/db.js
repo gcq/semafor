@@ -10,7 +10,7 @@
 import { mergeBundles } from '../sync/merge.js';
 
 const DB_NAME = 'onda';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let _db = null;
 /** @returns {Promise<IDBDatabase>} */
@@ -28,6 +28,9 @@ function open() {
       }
       if (!db.objectStoreNames.contains('tombstones'))
         db.createObjectStore('tombstones', { keyPath: 'id' }); // deleted intersection + observation ids
+      // Derived data only: never exported, never synced, safe to drop at any time.
+      if (!db.objectStoreNames.contains('modelCache'))
+        db.createObjectStore('modelCache', { keyPath: 'key' });
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -98,6 +101,38 @@ export async function allObservationsByIntersection() {
   for (const o of all) (by[o.intersectionId] ??= []).push(o);
   return by;
 }
+
+/** Every observation as one flat list (the clock model is global). */
+export const allObservations = () => tx('observations', 'readonly', (s) => reqValue(s.observations.getAll()));
+
+// --- model cache (derived; one entry kept) ---
+// FNV-1a fallback for non-secure contexts, where crypto.subtle is undefined.
+function fnv1a(str) {
+  let h1 = 0x811c9dc5, h2 = 0x01000193 ^ 0xabcdef;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+}
+
+/** Stable key over exactly the inputs the model reads: taps, map heads, algo version. */
+export async function modelKey(observations, intersections, algoVersion) {
+  const taps = [...observations].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((o) => `${o.id},${o.t},${o.headId ?? ''},${o.aspect ?? ''}`).join(';');
+  const map = [...intersections].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((i) => `${i.id}:${(i.heads ?? []).map((h) => h.id).sort().join(',')}`).join(';');
+  const text = `${algoVersion}|${taps}|${map}`;
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return 'sha256-' + [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { return 'fnv-' + fnv1a(text) + text.length.toString(16); }
+}
+
+/** The cached { key, model } (at most one entry), or null. */
+export const loadModelCache = async () => (await tx('modelCache', 'readonly', (s) => reqValue(s.modelCache.getAll())))?.[0] ?? null;
+export const saveModelCache = (key, model) => tx('modelCache', 'readwrite', (s) => { s.modelCache.clear(); s.modelCache.put({ key, model }); });
 
 // --- prefs (localStorage, best-effort) ---
 export function getPref(key, fallback = null) {

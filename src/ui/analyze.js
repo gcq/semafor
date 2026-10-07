@@ -1,101 +1,103 @@
-// Analyze view: the whole-junction picture of the model every other view uses
-// (read-only, nothing to save) — each light's status and the learned phase
-// table across all lights.
+// Analyze view: what the clock model (the one every other view uses) believes,
+// in plain words — read-only, nothing to save. "Not enough data to tell" is a
+// normal answer here, not an error.
 
-import { characterizeIntersection } from '../inference/characterize.js';
 import { headLabel } from '../inference/heads.js';
-import { esc, ASPECT_HEX, intersectionOptions } from './dom.js';
+import { esc } from './dom.js';
+import { ASPECT_INFO } from '../domain/model.js';
 
-const STATUS = {
-  fixed: ['st-fixed', 'fixed timing · predicted'],
-  actuated: ['st-actuated', 'sensor-controlled · not predicted'],
-  insufficient: ['st-other', 'needs more taps'],
-  missing: ['st-other', 'not observed yet'],
-};
+let ctx = null;
 
-let ctx = null, anaId = null, observationsByIx = {};
+export function mountAnalyze(root, api) { ctx = { root, api }; render(); }
+export function refreshAnalyze() { if (ctx) render(); }
 
-export function mountAnalyze(root, api) {
-  ctx = { root, api };
-  root.addEventListener('change', onChange);
-}
-
-export async function refreshAnalyze() {
-  if (!ctx) return;
-  const list = ctx.api.list();
-  if (!anaId || !list.find((i) => i.id === anaId)) anaId = list[0]?.id ?? null;
-  observationsByIx = await ctx.api.observationsAll();
-  render();
-}
+const fmt = (x, d = 1) => (Number.isFinite(x) ? String(Math.round(x * 10 ** d) / 10 ** d) : '?');
+const hhmm = (min) => { const m = ((Math.round(min) % 1440) + 1440) % 1440; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
+const aspectName = (a) => (ASPECT_INFO[a]?.label ?? a).toLowerCase();
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 function render() {
+  const model = ctx.api.model();
+  const taps = ctx.api.taps();
+  const status = ctx.api.status();
   const list = ctx.api.list();
-  const ix = anaId ? ctx.api.get(anaId) : null;
-  const obs = observationsByIx[anaId] ?? [];
-  const c = ix ? characterizeIntersection(ix, obs, ctx.api.nowMs()) : null;
+  const ixOf = (id) => list.find((i) => i.id === id);
+  const lightName = (hid) => {
+    const ix = ixOf(model?.lights?.[hid]?.intersectionId);
+    return ix ? `${ix.name} · ${headLabel(ix, hid)}` : hid;
+  };
+  const tapById = new Map(taps.map((t) => [t.id, t]));
 
-  ctx.root.innerHTML = `
-    <div class="card">
-      <div class="field"><label for="ana-pick">Intersection</label>
-        <select id="ana-pick" class="grow" data-act="ana-pick">${intersectionOptions(list, anaId)}</select></div>
-      <p class="note">${obs.length} tap${obs.length === 1 ? '' : 's'} logged. This is the same model Live uses; it updates by itself as you tap.</p>
-      ${c && ix ? reconstructionHtml(c, ix) : ''}
-    </div>`;
+  const head = `<div class="card">
+    <p class="note">${plural(taps.length, 'tap')} logged · model ${status === 'uptodate' ? 'up to date' : status === 'recomputing' ? 'recomputing…' : 'not computed yet'}.
+      Everything below is worked out again from your taps and the map; nothing here is saved or edited by hand.</p>
+    ${model ? globalHtml(model) : '<p class="note">No model yet. In Capture, watch a light and tap its color the instant it changes, for a few cycles.</p>'}
+  </div>`;
+  const groups = model ? (model.groups ?? []).map((g) => groupHtml(g, model, { ixOf, lightName, tapById })).join('') : '';
+  ctx.root.innerHTML = head + groups;
 }
 
-function reconstructionHtml(c, ix) {
-  const rec = c.rec;
-  if (!rec) return `<p class="note">Not enough taps yet to find a cycle. In Capture, watch a light and tap its color on each change for a few cycles.</p>${plansHtml(c, ix)}`;
+function globalHtml(model) {
+  const lag = model.lag;
+  const why = {};
+  for (const d of model.dropped ?? []) why[d.reason] = (why[d.reason] ?? 0) + 1;
+  const dropped = Object.entries(why).map(([r, n]) => `${n} ${esc(r)}`).join(' · ');
+  return `
+    ${lag ? `<p class="note small">Learned tap lag: your taps land about ${fmt(lag.medianSec)} s after the light changes${lag.p90Sec ? ` (9 in 10 within ${fmt(lag.p90Sec)} s)` : ''}.</p>` : ''}
+    ${dropped ? `<p class="note small">${plural((model.dropped ?? []).length, 'tap')} left out: ${dropped}.</p>` : '<p class="note small">No taps left out.</p>'}
+    ${(model.groups ?? []).length ? '' : '<p class="note">Not enough taps yet to find a cycle anywhere.</p>'}`;
+}
 
-  const rows = [...rec.observedHeads.map((h) => [h, rec.headVerdicts[h]]), ...rec.missingHeads.map((h) => [h, 'missing'])];
-  const lights = rows.map(([h, v]) => {
-    const [cls, text] = STATUS[v] ?? STATUS.missing;
-    return `<div class="kv"><span class="k">${esc(headLabel(ix, h))}</span><span class="${cls}">${text}</span></div>`;
+function clockWords(c) {
+  if (!c) return 'No clock fitted yet.';
+  const days = `${plural(c.days ?? 0, 'day')} of taps`;
+  if (c.hypothesis === 'steady') return `Steady clock: the same timing every day (${days}). A tap today is not needed.`;
+  if (c.hypothesis === 'nudged') return `The clock drifts about ±${fmt(c.nudgeSigmaSec)} s from one day to the next (${days}); a tap today tightens the prediction.`;
+  return (c.days ?? 0) < 3
+    ? `Not enough data to tell if the timing repeats from day to day (${days}, need 3). For now each day needs its own tap.`
+    : `Days look unrelated (${days}): this light needs a tap each day before it can be predicted.`;
+}
+
+function groupHtml(g, model, { ixOf, lightName, tapById }) {
+  const members = g.intersectionIds.map((id) => esc(ixOf(id)?.name ?? id)).join(' + ');
+  const aspectOfKey = (k) => k.split('|');
+  const useful = (model.usefulTaps ?? []).filter((u) => g.headIds.includes(u.headId));
+  const plans = (g.plans ?? []).map((p) => {
+    const win = (p.windows ?? []).map((w) => `${hhmm(w.fromMin)}–${hhmm(w.toMin)}`).join(', ') || 'all day';
+    const dc = p.dayClass && p.dayClass !== 'all' ? ` · ${p.dayClass}s` : '';
+    const c = p.clock;
+    const marks = Object.entries(p.marks ?? {}).sort((a, b) => a[1].posSec - b[1].posSec).map(([k, m]) => {
+      const [hid, asp] = aspectOfKey(k);
+      return `<div class="kv"><span class="k">${esc(lightName(hid))} → ${esc(aspectName(asp))}</span>
+        <span>${m.actuated ? '<span class="st-actuated">sensor-controlled · not predicted</span>'
+          : `at ${fmt(m.posSec)} s${m.spreadSec >= 0.5 ? ` ±${fmt(m.spreadSec)}` : ''} · ${plural(m.n, 'tap')}`}</span></div>`;
+    }).join('');
+    return `
+      <div class="sub-card">
+        <div class="kv"><span class="k">${esc(win)}${esc(dc)}</span>
+          <span>cycle ${p.cycleSec ? `${fmt(p.cycleSec)}${p.cycleSigmaSec >= 0.05 ? ` ±${fmt(p.cycleSigmaSec, 2)}` : ''} s` : 'unknown'}</span></div>
+        <p class="note small">${esc(clockWords(c))}</p>
+        <p class="note small">Drift within a day: ${c?.driftSecPerHour == null ? 'unknown (needs taps at least 2 h apart on one day)' : `${fmt(c.driftSecPerHour, 2)} s per hour`}.
+          Held-out error: ${c?.heldOutErrSec == null ? 'not tested yet (needs taps on 3+ days)' : `${fmt(c.heldOutErrSec)} s typical when predicting a day it hadn't seen`}.</p>
+        ${marks ? `<h3 class="section-gap">Marks</h3>${marks}` : '<p class="note small">No colour positions known yet.</p>'}
+      </div>`;
   }).join('');
 
-  return `
-    ${reliabilityHtml(c.plan?.reliability)}
-    <div class="actions">
-      <span class="tag">${rec.confidence.level} confidence</span>
-      <span class="tag">~${rec.cyclesObserved} cycles</span>
-      <span class="tag">cycle ${rec.cycleLengthSec} s</span>
-    </div>
-    <h3 class="section-gap">Lights</h3>
-    ${lights}
-    ${rec.missingHeads.length ? '<p class="note small">Lights not observed yet: watch each once — you may be cross traffic on another drive.</p>' : ''}
-    ${rec.impliedGaps ? '<p class="note small">Some colors were never captured (e.g. amber), so those stretches are estimates.</p>' : ''}
-    <h3 class="section-gap">Phases</h3>
-    ${rec.phases.map((p, i) => `
-      <div class="kv">
-        <span class="idx">${i + 1}</span>
-        <span class="swatches">${rec.observedHeads.map((h) => `<span class="swatch" style="background:${ASPECT_HEX[p.states[h] ?? 'off']}" title="${esc(headLabel(ix, h))}"></span>`).join('')}</span>
-        <span class="dur">${p.durSec} s</span>
-        <span class="tag ${p.type}">${p.type === 'actuated' ? 'sensor' : 'fixed'}</span>
-      </div>`).join('')}
-    ${plansHtml(c, ix)}`;
-}
+  const outliers = (model.outliers ?? []).filter((o) => {
+    const t = tapById.get(o.tapId);
+    return t && g.headIds.includes(t.headId);
+  }).map((o) => {
+    const t = tapById.get(o.tapId);
+    return `<div class="kv"><span class="k">${new Date(t.t).toLocaleString()} · ${esc(lightName(t.headId))} ${esc(aspectName(t.aspect))}</span>
+      <span class="small">removing this tap improves the fix by ${fmt(o.gainSec)} s</span></div>`;
+  }).join('');
 
-function reliabilityHtml(rel) {
-  if (!rel) return '';
-  const word = { high: 'reliable', medium: 'rough', low: 'unreliable' }[rel.level];
-  return `<p class="note">Right now: <b>${word}</b>${rel.sigmaSec >= 2 ? ` (±${Math.round(rel.sigmaSec)} s)` : ''} — ${esc(rel.reasons.join(' · '))}.</p>`;
+  return `<div class="card">
+    <h3>${members || 'Group'} ${g.corridor ? '<span class="tag fixed">corridor</span>' : ''}</h3>
+    ${g.corridor ? '<p class="note small">These junctions run on one shared clock: a tap at any of them helps all.</p>' : ''}
+    ${plans || '<p class="note small">No plan found yet — not enough data to tell.</p>'}
+    ${outliers ? `<h3 class="section-gap">Taps that look off</h3>${outliers}<p class="note small">They are left out of the fit, not deleted.</p>` : ''}
+    ${useful.length ? `<h3 class="section-gap">Most useful next tap</h3>${useful.slice(0, 2).map((u) =>
+      `<p class="note small"><b>${esc(lightName(u.headId))} → ${esc(aspectName(u.aspect))}</b>: ${esc(u.why ?? '')}${u.gainSec ? ` (could sharpen the fix by ~${fmt(u.gainSec)} s)` : ''}</p>`).join('')}` : ''}
+  </div>`;
 }
-
-// The time-of-day plans found in the whole log, and the taps left out of it.
-function plansHtml(c, ix) {
-  const aspect = (k) => { const [h, a] = k.split('|'); return `${esc(headLabel(ix, h))} ${a}`; };
-  const plans = (c.plans ?? []).filter((p) => p.sittings).map((p) => `
-    <div class="kv"><span class="k">${p.windows.join(', ') || 'all day'}${p.dayClass === 'all' ? '' : ` · ${p.dayClass}s`}</span>
-      <span>${p.cycleSec ? `cycle ${p.cycleSec} s` : 'cycle unknown'} · ${p.sittings} sitting${p.sittings === 1 ? '' : 's'}</span></div>
-    ${Object.keys(p.durations).length ? `<p class="note small">${Object.entries(p.durations).map(([k, v]) => `${aspect(k)} ${v} s`).join(' · ')}</p>` : ''}`).join('');
-  const why = {};
-  for (const d of c.cleaning?.dropped ?? []) why[d.reason] = (why[d.reason] ?? 0) + 1;
-  const dropped = Object.entries(why).map(([r, n]) => `${n} ${r}`).join(' · ');
-  return `
-    <h3 class="section-gap">Plans by time of day</h3>
-    ${plans || '<p class="note small">None yet.</p>'}
-    ${(c.variable ?? []).length ? `<p class="note small">Sensor-like (varies at the same hour): ${c.variable.map(aspect).join(', ')}.</p>` : ''}
-    ${dropped ? `<p class="note small">Taps left out: ${esc(dropped)}.</p>` : ''}`;
-}
-
-function onChange(e) { if (e.target.dataset.act === 'ana-pick') { anaId = e.target.value; render(); } }

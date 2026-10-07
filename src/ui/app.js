@@ -2,9 +2,9 @@
 // store, and paints the DOM on a timer. No framework.
 
 import * as store from '../store/db.js';
-import { activePlan, predictHead, timeToAspect } from '../predict/state.js';
+import { nextOnset, currentAspect, phaseTable, withTap } from '../predict/next.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
-import { characterizeIntersection } from '../inference/characterize.js';
+import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
 import { mergeBundles } from '../sync/merge.js';
@@ -27,7 +27,12 @@ const state = {
   captureHead: null,       // { ixId, id } head being watched in Capture
   captureLog: [],
   sceneHead: null,         // { ixId, id } head made active by tapping its pole
-  models: {},              // ixId -> { rec, plan }: the model every view uses (rebuilt, never saved)
+  obs: [],                 // every tap (the clock model is global: corridors span intersections)
+  model: null,             // THE model every view uses (a pure function of taps + map; cached, never authoritative)
+  modelKey: null,          // cache key of the inputs `model` was computed from (null = withTap'd / stale)
+  modelStatus: 'none',     // 'none' | 'uptodate' | 'recomputing'
+  lastTaps: {},            // headId -> { t, aspect }: echo of your last tap on a light
+  tables: new Map(),       // phaseTable memo: `${ixId}` -> { model, minute, table }
   lastIxId: null,          // to reset the manual head pick when the intersection changes
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
@@ -39,6 +44,8 @@ const state = {
   // otherwise may wipe a site's data) — the real way taps get lost, not sync.
   navigator.storage?.persist?.().catch(() => {});
   state.intersections = await store.allIntersections();
+  state.obs = await store.allObservations();
+  noteLastTaps();
   state.selectedId = store.getPref('selectedId', null);
   startGps();
   wireUi();
@@ -49,8 +56,7 @@ const state = {
   safe('analyze', () => mountAnalyze(document.getElementById('analyze-root'), analyzeApi()));
   safe('sync', () => mountSync(document.getElementById('sync-root'), syncApi()));
   registerSW();
-  await refreshAllModels();
-  setInterval(refreshAllModels, 60000); // plan windows and drift ± move with the clock
+  await bootModel(); // predictions take `now` as an input, so no periodic rebuild is needed
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
@@ -123,34 +129,111 @@ function tick() {
   renderCapture();
 }
 
-// Rebuild one intersection's model from its observations — after a tap/undo
-// this is the per-session re-anchor. Nothing is ever "saved": the model is a
-// pure function of the observation log.
-async function refreshModel(ix) {
-  try { state.models[ix.id] = characterizeIntersection(ix, await store.observationsFor(ix.id), Date.now()); }
-  catch (e) { console.error('model failed for', ix.name, e); }
-}
+// ---------- the model ----------
+// ONE global model, a pure function of (taps, map). Boot shows the cached one
+// right away; every change applies `withTap` instantly (a new tap) and then a
+// debounced full recompute in a Web Worker swaps in the exact result. Nothing
+// here is authoritative: dropping the cache just costs one recompute.
+let worker = null, workerBroken = false, jobId = 0, recomputeTimer = null, running = false, again = false, gen = 0;
+const pending = new Map(); // job id -> { observations, intersections, res, rej }
 
-async function refreshAllModels() {
+const mainThread = ({ observations, intersections }) => new Promise((res, rej) => setTimeout(() => {
+  try { res(computeModel({ observations, intersections })); } catch (e) { rej(e); }
+}, 0));
+
+function getWorker() {
+  if (worker || workerBroken || typeof Worker === 'undefined') return worker;
   try {
-    const byIx = await store.allObservationsByIntersection();
-    const now = Date.now();
-    const models = {};
-    for (const ix of state.intersections) models[ix.id] = characterizeIntersection(ix, byIx[ix.id] ?? [], now);
-    state.models = models;
-  } catch (e) { console.error('models failed', e); }
+    worker = new Worker(new URL('../inference/worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => {
+      const { id, model, error } = e.data ?? {};
+      const job = pending.get(id); if (!job) return;
+      pending.delete(id);
+      if (error) job.rej(new Error(error)); else job.res(model);
+    };
+    // No module-worker support (older browsers), or it failed to load: from now
+    // on compute on the main thread, and rerun whatever was in flight there.
+    worker.onerror = (e) => {
+      e?.preventDefault?.();
+      workerBroken = true; worker?.terminate(); worker = null;
+      for (const job of pending.values()) mainThread(job).then(job.res, job.rej);
+      pending.clear();
+    };
+  } catch { workerBroken = true; worker = null; }
+  return worker;
 }
 
-// The reconstructed model; else an imported plan (e.g. from the TeslaMate tool)
-// — but only one that actually predicts these heads (legacy plans keyed by
-// movement id predict nothing and would show a bogus "Off").
-function livePlanFor(ix, now) {
-  const m = state.models[ix.id]?.plan;
-  if (m) return m;
-  const p = activePlan(ix.plans, now);
-  const ids = new Set(headsOf(ix).map((h) => h.id));
-  return p?.stages?.some((st) => Object.keys(st.states ?? {}).some((k) => ids.has(k))) ? p : null;
+function compute(observations, intersections) {
+  const w = getWorker();
+  if (!w) return mainThread({ observations, intersections });
+  return new Promise((res, rej) => {
+    const id = ++jobId;
+    pending.set(id, { observations, intersections, res, rej });
+    w.postMessage({ id, observations, intersections });
+  });
 }
+
+async function bootModel() {
+  try {
+    const key = await store.modelKey(state.obs, state.intersections, ALGO_VERSION);
+    const cached = await store.loadModelCache().catch(() => null);
+    if (cached?.model?.algoVersion === ALGO_VERSION) {
+      state.model = cached.model;
+      if (cached.key === key) { state.modelKey = key; state.modelStatus = 'uptodate'; refreshAnalyze(); return; }
+      state.modelStatus = 'recomputing';
+    } else state.modelStatus = state.obs.length ? 'recomputing' : 'uptodate';
+  } catch (e) { console.error('model cache failed', e); }
+  scheduleRecompute(0);
+}
+
+/** Taps/map changed: mark the model stale and recompute soon (debounced). */
+function scheduleRecompute(delay = 200) {
+  gen++;
+  if (state.model || state.obs.length) state.modelStatus = 'recomputing';
+  clearTimeout(recomputeTimer);
+  recomputeTimer = setTimeout(recompute, delay);
+}
+
+async function recompute() {
+  if (running) { again = true; return; }
+  running = true;
+  try {
+    do {
+      again = false;
+      const myGen = gen, observations = state.obs, intersections = state.intersections;
+      const key = await store.modelKey(observations, intersections, ALGO_VERSION);
+      if (key === state.modelKey && state.model) { if (myGen === gen) state.modelStatus = 'uptodate'; continue; }
+      let model;
+      try { model = await compute(observations, intersections); }
+      catch (e) { console.error('model failed', e); state.modelStatus = state.model ? 'recomputing' : 'none'; break; }
+      store.saveModelCache(key, model).catch(() => {}); // valid for ITS inputs whatever happened since
+      if (myGen === gen) { state.model = model; state.modelKey = key; state.modelStatus = 'uptodate'; refreshAnalyze(); }
+      else again = true; // taps arrived meanwhile: this result lacks them, go again
+    } while (again);
+  } finally { running = false; }
+}
+
+function noteLastTaps() {
+  const last = {};
+  for (const o of state.obs) if (o.headId && (!last[o.headId] || o.t > last[o.headId].t)) last[o.headId] = { t: o.t, aspect: o.aspect };
+  state.lastTaps = last;
+}
+
+// phaseTable is memoised per model, intersection and minute (the render loop runs 4x/s).
+function tableFor(ixId, now) {
+  if (!state.model) return null;
+  const minute = Math.floor(now / 60000), hit = state.tables.get(ixId);
+  if (hit && hit.model === state.model && hit.minute === minute) return hit.table;
+  let table = null;
+  try { table = phaseTable(state.model, ixId, now); } catch (e) { console.error('phaseTable failed', e); }
+  state.tables.set(ixId, { model: state.model, minute, table });
+  return table;
+}
+
+const aspectNow = (hid, now) => {
+  if (!state.model) return null;
+  try { return currentAspect(state.model, hid, now) ?? null; } catch { return null; }
+};
 
 // Direction you're approaching the junction from. The bearing from you to its
 // centre is right even when stopped (GPS course is null then), so prefer it until
@@ -178,75 +261,76 @@ function renderLive(ix) {
   $('ix-name').textContent = ix.name;
 
   const now = Date.now();
-  const plan = livePlanFor(ix, now);
   const heads = headsOf(ix);
   const active = resolveActiveHead(ix, heads);
 
-  // scene
-  const aspectOf = (hid) => (plan ? (predictHead(plan, hid, now)?.aspect ?? 'off') : 'off');
+  // scene: a light is coloured only when the model knows enough to say (>= 2 colours tapped)
+  const aspectOf = (hid) => aspectNow(hid, now) ?? 'off';
   const ego = state.pos;
   const upDeg = approachBearing(ix) ?? 0;
   const canvas = $('live-scene');
   if (canvas && canvas.clientWidth) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
 
-  renderCountdown(ix, plan, active, now);
-  renderLiveMeta(ix, plan, active);
+  renderCountdown(active, now);
+  renderLiveMeta(active, now);
   renderActiveHead(ix, active);
   renderUpcoming(ix);
   $('live-hint').textContent = state.selectedId ? 'Manually selected — tap it again to auto-follow GPS.' : '';
 }
 
-// Headline: seconds until the active head next turns green (or green time left).
-// Timing drift never hides it: a guess is marked "~" with its ± range. Sensor
-// (actuated) lights are the exception — not predicted at all.
-function renderCountdown(ix, plan, active, now) {
-  const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label');
-  // The number takes the current light's color, so it reads at a glance.
-  const tint = (aspect) => { $('count').dataset.aspect = aspect ?? ''; };
-  tint(null);
-  if (!active) { ind.textContent = '—'; num.textContent = '--'; cap.textContent = ''; return; }
-  if (!plan || !plan.stages.some((st) => active.id in st.states)) {
-    // No timing for this light yet: echo your last tap on it so a tap is felt at once.
-    const last = state.models[ix.id]?.lastTaps?.[active.id];
-    if (last && now - last.t < LAST_TAP_ECHO_MS) {
-      ind.textContent = ASPECT_INFO[last.aspect]?.label ?? '—';
-      tint(last.aspect);
-      num.textContent = Math.round((now - last.t) / 1000);
-      cap.textContent = 's since your tap · no timing yet';
-    } else { ind.textContent = 'Learning'; num.textContent = '--'; cap.textContent = plan ? 'no taps on this light yet' : 'tap colors to learn'; }
-    return;
-  }
-  const rel = plan.reliability;
-  const pred = predictHead(plan, active.id, now);
+const REASONS = {
+  'needs a tap today': 'needs a tap today — tap this light when it turns green',
+  actuated: 'sensor-controlled light · not predicted',
+};
+
+// Headline: "Green in 23 s ±2" for the active light, with how we know. When the
+// model can't say, show why instead of a number. The number takes the current
+// colour only when the model knows it (>= 2 colours tapped); else it stays neutral.
+function renderCountdown(active, now) {
+  const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label'), box = $('count');
+  const unit = box.querySelector('.unit');
+  const show = (label, n, caption, aspect) => {
+    ind.textContent = label; num.textContent = n; cap.textContent = caption;
+    box.dataset.aspect = aspect ?? ''; unit.hidden = n === '--';
+  };
+  if (!active) return show('—', '--', '', null);
+  if (!state.model) return show('Learning', '--', state.obs.length ? 'working it out…' : 'tap colors to learn', null);
+
+  const cur = aspectNow(active.id, now);
+  const curLabel = cur ? ASPECT_INFO[cur]?.label : null;
+  let pred = null;
+  try { pred = nextOnset(state.model, active.id, 'green', now); } catch (e) { console.error('nextOnset failed', e); }
   if (!pred || pred.unpredictable) {
-    ind.textContent = pred ? 'Sensor-controlled' : '—'; num.textContent = '--'; cap.textContent = pred ? 'not predicted' : '';
-    return;
+    const last = state.lastTaps[active.id];
+    const echo = last && now - last.t < LAST_TAP_ECHO_MS ? ` · your last tap: ${ASPECT_INFO[last.aspect]?.label ?? last.aspect} ${Math.round((now - last.t) / 1000)} s ago` : '';
+    const why = pred ? (REASONS[pred.reason] ?? pred.reason ?? 'not predicted') : 'not predicted';
+    return show(curLabel ? `${curLabel} now` : 'Green in', '--', why + echo, cur);
   }
-  const guess = pred.uncertain || (rel && rel.level !== 'high');
-  const pm = rel && rel.sigmaSec >= 2 ? ` · ±${Math.round(rel.sigmaSec)}s` : '';
-  ind.textContent = ASPECT_INFO[pred.aspect]?.label ?? '—';
-  tint(pred.aspect);
-  const show = (sec) => `${guess ? '~' : ''}${sec}`;
-  if (pred.aspect === 'green') { num.textContent = show(pred.secToChange); cap.textContent = `left${pm}`; return; }
-  const tg = timeToAspect(plan, active.id, now, 'green');
-  if (!tg || tg.unpredictable) { num.textContent = show(pred.secToChange); cap.textContent = `until it changes${pm}`; return; }
-  num.textContent = show(tg.secToAspect);
-  cap.textContent = `until green${pm}`;
+  const pm = pred.plusMinus >= 0.5 ? `±${Math.round(pred.plusMinus)} s` : '';
+  show(curLabel ? `${curLabel} now · green in` : 'Green in', String(Math.max(0, Math.round(pred.inSec))),
+    [pm, pred.basis].filter(Boolean).join(' · '), cur);
 }
 
 const LAST_TAP_ECHO_MS = 10 * 60 * 1000;
-const RELIABILITY = { high: 'reliable', medium: 'rough', low: 'unreliable' };
 
-function renderLiveMeta(ix, plan, active) {
-  const verdict = active && state.models[ix.id]?.rec?.headVerdicts?.[active.id];
-  const rel = plan?.reliability;
+function ago(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 1 ? 'just now' : m < 90 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+// Small, unobtrusive model indicator (+ corridor / sensor flags for the active light).
+function renderLiveMeta(active, now) {
   const parts = [];
-  if (rel) parts.push(`<span class="badge ${rel.level}" title="${esc(rel.reasons.join(' · '))}">${RELIABILITY[rel.level]}</span>`,
-    `<span class="badge">${esc(rel.reasons[rel.reasons.length - 1])}</span>`); // warnings come last
-  else if (plan?.confidence?.level) parts.push(`<span class="badge ${plan.confidence.level}">${plan.confidence.level} confidence</span>`);
-  if (verdict === 'actuated') parts.push('<span class="badge uncertain">sensor · not predicted</span>');
-  else if (verdict === 'insufficient') parts.push('<span class="badge">needs more taps</span>');
-  $('meta').innerHTML = parts.join('');
+  const m = state.model;
+  if (state.modelStatus === 'uptodate') parts.push('<span class="badge" title="The timing model matches every tap and the map">up to date</span>');
+  else if (state.modelStatus === 'recomputing')
+    parts.push(`<span class="badge uncertain" title="Showing the last result while the new one is computed">recomputing…${m?.computedAt ? ` (from ${ago(now - m.computedAt)})` : ''}</span>`);
+  const light = active && m?.lights?.[active.id];
+  const group = light && m.groups?.find((g) => g.id === light.groupId);
+  if (group?.corridor) parts.push('<span class="badge" title="Lights at several junctions share one clock">corridor</span>');
+  if (light?.actuated?.length) parts.push('<span class="badge uncertain">sensor · not predicted</span>');
+  const html = parts.join('');
+  if (state._metaHtml !== html) { state._metaHtml = html; $('meta').innerHTML = html; }
 }
 
 // The big upright tap panel for the active head (rebuilt only when it changes, so
@@ -278,12 +362,13 @@ function onSceneClick(e) {
 
 async function undoLast() {
   if (!state.lastObs) return;
-  const { id, ixId } = state.lastObs;
+  const { id, ixId } = state.lastObs; void ixId;
   await store.deleteObservation(id);
   state.lastObs = null;
   state.captureLog = state.captureLog.filter((l) => l.id !== id);
-  const ix = state.intersections.find((i) => i.id === ixId);
-  if (ix) await refreshModel(ix);
+  state.obs = state.obs.filter((o) => o.id !== id);
+  noteLastTaps();
+  scheduleRecompute();
   tick();
 }
 
@@ -327,10 +412,9 @@ function renderUpcoming(currentIx) {
   const now = Date.now();
   rows.forEach(({ intersection: ix, etaSec }, i) => {
     const row = list.children[i]; if (!row) return;
-    const plan = livePlanFor(ix, now);
     const head = resolveActiveHead(ix, headsOf(ix));
-    const pred = plan && head ? predictHead(plan, head.id, now) : null;
-    row.querySelector('.dot').className = `dot ${pred?.color ?? 'dark'}`;
+    const asp = head ? aspectNow(head.id, now) : null;
+    row.querySelector('.dot').className = `dot ${ASPECT_INFO[asp]?.color ?? 'dark'}`;
     row.querySelector('.eta').textContent = etaSec == null ? '' : etaSec > 90 ? `${Math.round(etaSec / 60)} min` : `${Math.round(etaSec)}s`;
   });
 }
@@ -403,11 +487,15 @@ async function logAspect(intersectionId, headId, aspect) {
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
+  state.obs = [...state.obs, ev];
+  state.lastTaps[headId] = { t: ev.t, aspect };
   state.lastObs = { id: ev.id, ixId: intersectionId };
   const head = headsOf(ix).find((h) => h.id === headId);
   state.captureLog.push({ id: ev.id, t: ev.t, aspect, head: head?.label ?? headId, ix: ix.name });
   if (navigator.vibrate) navigator.vibrate(30);
-  await refreshModel(ix);
+  // instant: re-anchor today's clock on this tap; the exact recompute follows
+  if (state.model) { try { state.model = withTap(state.model, ev); } catch (e) { console.error('withTap failed', e); } }
+  scheduleRecompute(1000);
   renderCapture();
   tick();
 }
@@ -427,9 +515,9 @@ function wireUi() {
 // Reload the intersection set from the store and refresh every view.
 async function reloadData() {
   state.intersections = await store.allIntersections();
-  // New data (sync/import/edit) must reach the Live countdown now, not only
-  // after the next intersection change.
-  await refreshAllModels();
+  state.obs = await store.allObservations();
+  noteLastTaps();
+  scheduleRecompute(); // new data (sync/import/map edit): same key -> instant no-op
   refreshEditor();
   refreshAnalyze();
   tick();
@@ -444,7 +532,7 @@ function editorApi() {
     remove: async (id) => { await store.deleteIntersection(id); },
     gpsNow: () => state.pos,
     nowMs: () => Date.now(),
-    model: (id) => { const ix = state.intersections.find((i) => i.id === id); return ix ? livePlanFor(ix, Date.now()) : null; },
+    model: (id) => tableFor(id, Date.now()),
     onChange: reloadData,
   };
 }
@@ -453,7 +541,9 @@ function analyzeApi() {
   return {
     list: () => state.intersections,
     get: (id) => state.intersections.find((i) => i.id === id),
-    observationsAll: () => store.allObservationsByIntersection(),
+    model: () => state.model,
+    status: () => state.modelStatus,
+    taps: () => state.obs,
     nowMs: () => Date.now(),
     onChange: reloadData,
   };
