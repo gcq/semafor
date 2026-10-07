@@ -35,6 +35,9 @@ const state = {
 
 // ---------- boot ----------
 (async function boot() {
+  // Ask the browser not to evict our IndexedDB under storage pressure (Safari
+  // otherwise may wipe a site's data) — the real way taps get lost, not sync.
+  navigator.storage?.persist?.().catch(() => {});
   state.intersections = await store.allIntersections();
   state.selectedId = store.getPref('selectedId', null);
   startGps();

@@ -62,7 +62,12 @@ const reqValue = (request) => {
 };
 
 export const allIntersections = () => tx('intersections', 'readonly', (s) => reqValue(s.intersections.getAll()));
-export const putIntersection = (ix) => tx('intersections', 'readwrite', (s) => { s.intersections.put(ix); });
+// Saves always outrank what's stored: if sync brought in a newer rev while the
+// editor was open, bumping the draft's stale rev would lose to it on next sync.
+export const putIntersection = (ix) => tx('intersections', 'readwrite', (s) => {
+  const cur = s.intersections.get(ix.id);
+  cur.onsuccess = () => s.intersections.put({ ...ix, rev: Math.max(ix.rev ?? 0, (cur.result?.rev ?? 0) + 1) });
+});
 export const allTombstones = () => tx('tombstones', 'readonly', (s) => reqValue(s.tombstones.getAll()));
 
 export async function deleteIntersection(id) {
@@ -127,25 +132,28 @@ export async function importAll(bundle, { merge = true } = {}) {
 }
 
 /**
- * Overwrite storage with an already-reconciled bundle (from sync/import), in one
- * transaction: intersections become exactly `merged.intersections`, new
- * observations are added, tombstoned observations removed, tombstones unioned.
+ * Write an already-reconciled bundle (from sync/import) in one transaction.
+ * It's re-merged against what's stored *inside* the transaction, so a tap,
+ * edit, new intersection or undo made after the bundle was read isn't clobbered.
  */
 export function applyMerged(merged) {
-  const keep = new Set((merged.intersections ?? []).map((i) => i.id));
-  const deadObs = new Set((merged.tombstones ?? []).filter((t) => t.kind === 'obs').map((t) => t.id));
   return tx(['intersections', 'observations', 'tombstones'], 'readwrite', (s) => {
-    const ixKeys = s.intersections.getAllKeys();
-    ixKeys.onsuccess = () => {
-      for (const id of ixKeys.result) if (!keep.has(id)) s.intersections.delete(id);
-      for (const ix of merged.intersections ?? []) s.intersections.put(ix);
-    };
-    const obsKeys = s.observations.getAllKeys();
-    obsKeys.onsuccess = () => {
+    const ix = s.intersections.getAll(), obsKeys = s.observations.getAllKeys(), tb = s.tombstones.getAll();
+    let pending = 3;
+    const done = () => {
+      if (--pending) return;
       const have = new Set(obsKeys.result);
+      const current = { intersections: ix.result, observations: [], tombstones: tb.result };
+      const { merged: m } = mergeBundles(current, { ...merged, observations: [] });
+      const keep = new Set(m.intersections.map((i) => i.id));
+      for (const i of ix.result) if (!keep.has(i.id)) s.intersections.delete(i.id);
+      const before = new Map(ix.result.map((i) => [i.id, i]));
+      for (const i of m.intersections) if (before.get(i.id) !== i) s.intersections.put(i);
+      const deadObs = new Set(m.tombstones.filter((t) => t.kind === 'obs').map((t) => t.id));
       for (const o of merged.observations ?? []) if (!have.has(o.id) && !deadObs.has(o.id)) s.observations.put(o);
       for (const id of deadObs) if (have.has(id)) s.observations.delete(id);
+      for (const t of m.tombstones) s.tombstones.put(t);
     };
-    for (const t of merged.tombstones ?? []) s.tombstones.put(t);
+    ix.onsuccess = obsKeys.onsuccess = tb.onsuccess = done;
   });
 }
