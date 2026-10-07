@@ -10,7 +10,20 @@
 import { mergeBundles } from '../sync/merge.js';
 
 const DB_NAME = 'onda';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+
+// `plans` / `headPositions` on an intersection are derived data from old
+// versions (the clock model recomputes timing from taps alone). Strip them
+// wherever intersections enter or leave storage. rev/updatedAt are left alone
+// on purpose: stripping is not an edit, so it must never win or lose a sync
+// compare (sync decisions look at rev/updatedAt/ids, never at content). Returns
+// the same object when there is nothing to strip.
+const LEGACY_FIELDS = ['plans', 'headPositions'];
+const stripLegacy = (ix) => {
+  if (!ix || !LEGACY_FIELDS.some((f) => f in ix)) return ix;
+  const { plans, headPositions, ...rest } = ix;
+  return rest;
+};
 
 let _db = null;
 /** @returns {Promise<IDBDatabase>} */
@@ -18,7 +31,7 @@ function open() {
   if (_db) return _db;
   _db = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (ev) => {
       const db = req.result;
       if (!db.objectStoreNames.contains('intersections'))
         db.createObjectStore('intersections', { keyPath: 'id' });
@@ -31,6 +44,16 @@ function open() {
       // Derived data only: never exported, never synced, safe to drop at any time.
       if (!db.objectStoreNames.contains('modelCache'))
         db.createObjectStore('modelCache', { keyPath: 'key' });
+      // v4: one-time cleanup of legacy derived fields already stored
+      if (ev.oldVersion > 0 && ev.oldVersion < 4) {
+        const cur = req.transaction.objectStore('intersections').openCursor();
+        cur.onsuccess = () => {
+          const c = cur.result;
+          if (!c) return;
+          if (stripLegacy(c.value) !== c.value) c.update(stripLegacy(c.value));
+          c.continue();
+        };
+      }
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -69,7 +92,7 @@ export const allIntersections = () => tx('intersections', 'readonly', (s) => req
 // editor was open, bumping the draft's stale rev would lose to it on next sync.
 export const putIntersection = (ix) => tx('intersections', 'readwrite', (s) => {
   const cur = s.intersections.get(ix.id);
-  cur.onsuccess = () => s.intersections.put({ ...ix, rev: Math.max(ix.rev ?? 0, (cur.result?.rev ?? 0) + 1) });
+  cur.onsuccess = () => s.intersections.put({ ...stripLegacy(ix), rev: Math.max(ix.rev ?? 0, (cur.result?.rev ?? 0) + 1) });
 });
 export const allTombstones = () => tx('tombstones', 'readonly', (s) => reqValue(s.tombstones.getAll()));
 
@@ -90,17 +113,6 @@ export const deleteObservation = (id) => tx(['observations', 'tombstones'], 'rea
   s.observations.delete(id);
   s.tombstones.put({ id, kind: 'obs', deletedAt: Date.now() });
 });
-
-export const observationsFor = (intersectionId) =>
-  tx('observations', 'readonly', (s) => reqValue(s.observations.index('byIntersection').getAll(intersectionId)));
-
-/** All observations grouped by intersection id. */
-export async function allObservationsByIntersection() {
-  const all = await tx('observations', 'readonly', (s) => reqValue(s.observations.getAll()));
-  const by = {};
-  for (const o of all) (by[o.intersectionId] ??= []).push(o);
-  return by;
-}
 
 /** Every observation as one flat list (the clock model is global). */
 export const allObservations = () => tx('observations', 'readonly', (s) => reqValue(s.observations.getAll()));
@@ -151,7 +163,7 @@ export async function exportAll() {
     Object.defineProperty(box, '_result', { get: () => [a._result, b._result, c._result] });
     return box;
   });
-  return { version: 2, exportedAt: Date.now(), intersections, observations, tombstones };
+  return { version: 2, exportedAt: Date.now(), intersections: intersections.map(stripLegacy), observations, tombstones };
 }
 
 /**
@@ -183,7 +195,10 @@ export function applyMerged(merged) {
       const keep = new Set(m.intersections.map((i) => i.id));
       for (const i of ix.result) if (!keep.has(i.id)) s.intersections.delete(i.id);
       const before = new Map(ix.result.map((i) => [i.id, i]));
-      for (const i of m.intersections) if (before.get(i.id) !== i) s.intersections.put(i);
+      for (const i of m.intersections) {
+        const clean = stripLegacy(i);
+        if (before.get(i.id) !== clean) s.intersections.put(clean);
+      }
       const deadObs = new Set(m.tombstones.filter((t) => t.kind === 'obs').map((t) => t.id));
       for (const o of merged.observations ?? []) if (!have.has(o.id) && !deadObs.has(o.id)) s.observations.put(o);
       for (const id of deadObs) if (have.has(id)) s.observations.delete(id);

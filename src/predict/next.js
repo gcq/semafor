@@ -113,8 +113,22 @@ export function currentAspect(model, headId, now = Date.now()) {
 }
 
 /**
- * A legacy TimingPlan (stages / epoch / cycleLengthMs) of one intersection from
- * mark positions, for the scene and editor preview. null if nothing is known.
+ * @typedef {Object} PhaseTable  one intersection's cycle as stages, for the scene and editor preview
+ * @property {string} id
+ * @property {string} name
+ * @property {number} epoch                ms; start of the stage cycle containing `now`
+ * @property {number} cycleLengthMs
+ * @property {{ name: string, states: Record<string, string>, timing: { type: 'fixed'|'actuated', sec: number } }[]} stages
+ *           states: headId -> aspect, held for timing.sec
+ * @property {string[]} unpredictableHeads  heads with an actuated mark
+ * @property {boolean} uncertain           today's offset is unknown (independent days, no tap yet)
+ * @property {{ cycles: number, level: 'low'|'medium'|'high' }} confidence
+ */
+
+/**
+ * The cycle of one intersection from mark positions, for the scene and editor
+ * preview. null if nothing is known.
+ * @returns {PhaseTable|null}
  */
 export function phaseTable(model, intersectionId, now = Date.now()) {
   const heads = Object.entries(model.lights ?? {}).filter(([, l]) => l.intersectionId === intersectionId).map(([h]) => h);

@@ -2,7 +2,11 @@
 //
 // Reusable CLI. Feed it an Onda export (your intersections) and a TeslaMate
 // position dump; it reconstructs, per defined head, a cycle length and green/red
-// split from queue departures, and writes a report plus app-importable files.
+// split from queue departures (GPS-only diagnostics), and BACKTESTS the app's
+// tap-based clock model against those departures (backtest.js).
+//
+// A cross-check, never an input: GPS onsets are too imprecise to define the
+// model, so nothing here is meant to be imported into the app.
 //
 //   node tools/teslamate/infer.js \
 //     --export onda-export.json \
@@ -21,6 +25,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { inferIntersection, boundingBox, buildFetchSql, DEFAULTS } from './gps.js';
 import { distanceM } from '../../src/nav/proximity.js';
+import { computeModel } from '../../src/inference/clock.js';
+import { compareOnsets, backtestReport } from './backtest.js';
 
 // ---------- args ----------
 function parseArgs(argv) {
@@ -126,7 +132,7 @@ function fmtHead(id, h, labelFor) {
 
 function buildReport(results, meta) {
   const lines = [];
-  lines.push(`# Onda × TeslaMate timing inference`);
+  lines.push(`# Onda × TeslaMate timing cross-check`);
   lines.push(`Generated ${new Date().toISOString()}`);
   lines.push(`Fixes: ${meta.fixes} · intersections: ${results.length} · assoc radius: ${meta.radius} m · window: last ${meta.since} days, weekday`);
   lines.push('Verdicts: ✓ predictable = stable offset (usable now) · ~ drifting = offset slides, re-anchor · ✗ unstable = actuated / not clock-predictable. residual ± = live-prediction error bar.');
@@ -141,7 +147,6 @@ function buildReport(results, meta) {
     if (!ids.length) lines.push('  (no per-head data recovered)');
     for (const id of ids) lines.push(fmtHead(id, r.heads[id], labelFor));
     if (r.missingHeads.length) lines.push(`  ✗ no data yet for: ${r.missingHeads.map((h) => labelFor(h) || h).join(', ')}`);
-    if (r.plans?.length) lines.push(`  → ${r.plans.length} plan(s): ` + r.plans.map((p) => `${p.name} ${(p.cycleLengthMs / 1000)}s [${p.confidence.level}]`).join(', '));
     lines.push('');
   }
   return lines.join('\n');
@@ -184,30 +189,28 @@ function main() {
   const opt = { ...DEFAULTS, assocRadiusM: args.radius,
     sinceDays: args.since ?? DEFAULTS.sinceDays, tzOffsetH: args.tz ?? DEFAULTS.tzOffsetH };
   const results = [];
-  const allObs = [];
-  const enrichedIx = [];
+  const allOnsets = [];
   const labels = {};
 
   for (const ix of intersections) {
     labels[ix.id] = headLabels(ix);
     const r = inferIntersection(ix, fixes, opt);
     results.push(r);
-    for (const o of r.observations) allObs.push({ id: `obs_tm_${o.headId}_${o.t}`, ...o });
-    // attach the inferred plans (leave the user's structure untouched; bump rev so
-    // an Import wins). Only replaces plans; heads/movements/masts unchanged.
-    if (r.plans?.length) enrichedIx.push({ ...ix, plans: r.plans, rev: (ix.rev ?? 0) + 1, updatedAt: Date.now() });
-    else enrichedIx.push(ix);
+    for (const o of r.observations) allOnsets.push({ headId: o.headId, t: o.t });
   }
 
   mkdirSync(args.out, { recursive: true });
+  // backtest: the model comes from the export's TAPS only
+  const taps = Array.isArray(bundle) ? [] : (bundle.observations || []);
+  const model = computeModel({ observations: taps, intersections });
+  const allLabels = Object.assign({}, ...Object.values(labels));
+  const backtest = backtestReport(compareOnsets(model, allOnsets), (h) => allLabels[h] || h);
   const report = buildReport(results, { fixes: fixes.length, radius: args.radius, since: opt.sinceDays, headLabels: labels });
-  writeFileSync(`${args.out}/report.md`, report);
-  writeFileSync(`${args.out}/inferred-plans-export.json`, JSON.stringify({ ...(!Array.isArray(bundle) ? bundle : {}), intersections: enrichedIx }, null, 2));
-  writeFileSync(`${args.out}/inferred-observations.json`, JSON.stringify({ observations: allObs }, null, 2));
+  writeFileSync(`${args.out}/report.md`, report + '\n' + backtest);
   if (args.verbose) writeFileSync(`${args.out}/detail.json`, JSON.stringify(results, null, 2));
 
-  console.log(report);
-  console.log(`\nWrote:\n  ${args.out}/report.md\n  ${args.out}/inferred-plans-export.json  (Import in the Sync tab to preview predictions)\n  ${args.out}/inferred-observations.json${args.verbose ? `\n  ${args.out}/detail.json` : ''}`);
+  console.log(report + '\n' + backtest);
+  console.log(`\nWrote:\n  ${args.out}/report.md\n  (nothing to import: this is a cross-check)${args.verbose ? `\n  ${args.out}/detail.json` : ''}`);
 }
 
 main();

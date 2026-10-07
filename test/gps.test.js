@@ -4,7 +4,6 @@ import {
   findPasses, analyzePass, assignHead, estimateCycle, summarizeHead, buildPlan, inferIntersection,
   boundingBox, buildFetchSql, characterizeHead, estimateCycleJoint, resultant, inSegment,
 } from '../tools/teslamate/gps.js';
-import { predictHead } from '../src/predict/state.js';
 
 // A junction at (40.4300, -3.7000). North arm ~120 m up, south arm ~120 m down.
 // A car drives S->N (from south arm, through, to north arm) again and again.
@@ -18,7 +17,7 @@ const ix = {
   ],
   heads: [{ id: 'hN', name: 'Northbound' }],
   movements: [{ id: 'm1', from: 'S', to: 'N', headId: 'hN' }],
-  masts: [], plans: [], rev: 0,
+  masts: [], rev: 0,
 };
 
 // Build a northbound pass arriving at `arriveT`, waiting `waitS` (0 = through),
@@ -147,7 +146,7 @@ test('summarizeHead corrects for queue: onset from the early edge, stays fixed',
   assert.ok(h.queueLagSec >= 3, `queue lag surfaced (${h.queueLagSec}s)`);
 });
 
-test('buildPlan yields a predictor-consumable plan', () => {
+test('buildPlan yields a plan (stages, cycle length)', () => {
   const heads = {
     hN: { verdict: 'reconstructed', cycleSec: 90, cycleStrength: 0.9, greenSec: 40, onsetPhaseSec: 0,
       onsetSpreadSec: 1, type: 'fixed', samples: { greenOnsets: 10, passThroughs: 5, stopArrivals: 5 } },
@@ -155,9 +154,8 @@ test('buildPlan yields a predictor-consumable plan', () => {
   const { plan, headsUsed } = buildPlan(heads);
   assert.ok(plan);
   assert.deepEqual(headsUsed, ['hN']);
-  // green at t=0 (onset), red at t=60s into the 90s cycle
-  assert.equal(predictHead(plan, 'hN', 5000).aspect, 'green');
-  assert.equal(predictHead(plan, 'hN', 60000).aspect, 'red');
+  assert.equal(plan.cycleLengthMs, 90000);
+  assert.deepEqual(plan.stages.map((st) => st.states.hN), ['green', 'red']);
 });
 
 test('characterizeHead: stable offset = predictable, drift = drifting, wander = unstable', () => {

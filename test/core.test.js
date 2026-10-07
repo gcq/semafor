@@ -1,84 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { predictHead, cycleTimeMs, activePlan } from '../src/predict/state.js';
 import { rankNext, distanceM, angularDiff, headForApproach } from '../src/nav/proximity.js';
-import { withCycleLength } from '../src/domain/model.js';
-
-// Head h1: red 30s, green 25s, amber 5s (aspects observed directly).
-const plan = withCycleLength({
-  id: 'p1', epoch: 0,
-  stages: [
-    { states: { h1: 'red' }, timing: { type: 'fixed', sec: 30 } },
-    { states: { h1: 'green' }, timing: { type: 'fixed', sec: 25 } },
-    { states: { h1: 'amber' }, timing: { type: 'fixed', sec: 5 } },
-  ],
-});
-
-test('cycle length is summed and cached', () => {
-  assert.equal(plan.cycleLengthMs, 60000);
-});
-
-test('predict lands in the right phase and counts down (red)', () => {
-  const p = predictHead(plan, 'h1', 10_000); // 10s in -> red, 20 left
-  assert.equal(p.aspect, 'red');
-  assert.equal(p.go, false);
-  assert.equal(p.secToChange, 20);
-  assert.equal(p.next, 'green');
-});
-
-test('predict wraps across cycle boundary', () => {
-  const p = predictHead(plan, 'h1', 65_000); // 5s into next cycle -> red, 25 left
-  assert.equal(p.aspect, 'red');
-  assert.equal(p.secToChange, 25);
-});
-
-test('green window counts down to its end', () => {
-  const p = predictHead(plan, 'h1', 40_000); // 10s into 25s green
-  assert.equal(p.aspect, 'green');
-  assert.equal(p.secToChange, 15);
-});
-
-test('amber is its own observed phase', () => {
-  const p = predictHead(plan, 'h1', 57_000); // 2s into the 5s amber (starts at 55)
-  assert.equal(p.aspect, 'amber');
-  assert.equal(p.secToChange, 3);
-});
-
-test('flashing amber is a go aspect', () => {
-  const yp = withCycleLength({ id: 'y', epoch: 0, stages: [
-    { states: { h1: 'flash-amber' }, timing: { type: 'fixed', sec: 20 } },
-    { states: { h1: 'red' }, timing: { type: 'fixed', sec: 20 } },
-  ] });
-  const p = predictHead(yp, 'h1', 5_000);
-  assert.equal(p.aspect, 'flash-amber');
-  assert.equal(p.go, true);
-  assert.equal(p.secToChange, 15);
-});
-
-test('an actuated boundary is not predicted (imported/legacy plans mark phases)', () => {
-  const act = withCycleLength({ id: 'p2', epoch: 0, stages: [
-    { states: { h1: 'red' }, timing: { type: 'fixed', sec: 20 } },
-    { states: { h1: 'green' }, timing: { type: 'actuated', sec: 20 } },
-  ] });
-  const g = predictHead(act, 'h1', 25_000); // in green, whose end is actuated
-  assert.equal(g.unpredictable, true);
-  assert.equal(g.secToChange, null);
-  assert.equal(g.aspect, null);
-  const r = predictHead(act, 'h1', 10_000); // in red, whose end is a fixed boundary
-  assert.equal(r.unpredictable, false);
-  assert.equal(r.secToChange, 10);
-});
-test('activePlan honours time-of-day windows (incl. wrap past midnight)', () => {
-  const plans = [
-    { id: 'night', schedule: { fromMin: 22 * 60, toMin: 6 * 60 }, epoch: 0, stages: plan.stages },
-    { id: 'day', epoch: 0, stages: plan.stages }, // fallback
-  ];
-  const at = (h, m) => new Date(2026, 0, 1, h, m).getTime();
-  assert.equal(activePlan(plans, at(23, 0)).id, 'night');
-  assert.equal(activePlan(plans, at(3, 0)).id, 'night');
-  assert.equal(activePlan(plans, at(12, 0)).id, 'day');
-});
+import { makeIntersection } from '../src/domain/model.js';
 
 test('rankNext prefers soonest ETA inside the forward cone', () => {
   const pos = { lat: 0, lon: 0 };
@@ -122,4 +46,10 @@ test('headForApproach picks the near-side mast facing the approach (Spain)', () 
   assert.equal(headForApproach(ix, 95), 'hEastbound');
   assert.equal(headForApproach(ix, 270), null);          // nothing on the east side within tolerance
   assert.equal(headForApproach(ix, null), null);
+});
+
+test('makeIntersection carries structure only (no derived timing fields)', () => {
+  const ix = makeIntersection({ name: 'X', plans: [{ id: 'old' }] });
+  assert.equal(ix.name, 'X');
+  assert.ok(!('plans' in ix));
 });

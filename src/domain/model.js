@@ -4,10 +4,9 @@
 // mapping of each movement to a HEAD (a logical light, grouped by hand with
 // split/merge), and where masts sit on the map. You DO NOT author phasing.
 //
-// PHASING is reconstructed from OBSERVATIONS: you watch a head and tap its color
-// on each change (green / amber / flashing-amber / red / off). inference/
-// reconstruct.js folds those onto a cycle, derives the phases, and decides if
-// the controller is time-based at all. Plans (time-of-day) are inferred too.
+// TIMING is learned from OBSERVATIONS: you watch a head and tap its color on
+// each change (green / amber / flashing-amber / red / off). inference/clock.js
+// recomputes cycles, plans and corridors from the taps alone (docs/clock-model.md).
 //
 // Pure data + constructors + guards. No DOM, no storage.
 
@@ -58,33 +57,6 @@ export const ASPECT_INFO = {
  * @property {string} [headId]     which head controls it
  */
 
-/** @typedef {{ type: 'fixed'|'actuated', sec: number }} PhaseTiming  type describes the boundary that ENDS the phase */
-
-/**
- * A reconstructed phase: each head's aspect, held for a duration. Derived from
- * observation, never authored. (Kept as `stages` so shared timing code works.)
- * @typedef {Object} Phase
- * @property {string} [name]
- * @property {Record<string, Aspect>} states   headId -> aspect
- * @property {PhaseTiming} timing
- */
-
-/** @typedef {{ fromMin?: number, toMin?: number, days?: number[] }} Schedule */
-/** @typedef {{ cycles: number, stdevSec?: number, level: 'low'|'medium'|'high' }} Confidence */
-
-/**
- * A reconstructed controller behaviour for a time window.
- * @typedef {Object} TimingPlan
- * @property {string} id
- * @property {string} [name]
- * @property {Schedule} [schedule]
- * @property {number} epoch
- * @property {Phase[]} stages
- * @property {number} [cycleLengthMs]
- * @property {Confidence} [confidence]
- * @property {string[]} [unpredictableHeads]  actuated heads: never predicted
- */
-
 /**
  * A physical pole on the map, showing one or more heads. The same head can ride
  * on several masts (median dual carriageway = one head, two masts).
@@ -96,11 +68,11 @@ export const ASPECT_INFO = {
 
 /**
  * An observation: a head changed to `aspect` at time `t`. This is the ground
- * truth phasing is reconstructed from — one tap per real-world color change.
+ * truth the clock model learns from — one tap per real-world color change.
  *
  * `kind` is always 'onset' for new taps (the head JUST changed to `aspect`).
  * 'presence' (showing `aspect`, change unseen) is legacy: the app no longer
- * records it, and reconstruction ignores any old ones still in the log.
+ * records it, and the clock model ignores any old ones still in the log.
  * @typedef {Object} Observation
  * @property {string} id            unique (sync merges by union of ids)
  * @property {string} intersectionId
@@ -121,8 +93,6 @@ export const ASPECT_INFO = {
  * @property {Head[]} heads
  * @property {Movement[]} movements
  * @property {Mast[]} masts
- * @property {TimingPlan[]} plans      imported fallback only (e.g. TeslaMate); the live model is
- *                                     always reconstructed from observations, never saved
  * @property {number} createdAt
  * @property {number} updatedAt
  * @property {number} rev              monotonic edit counter (sync compares this)
@@ -143,22 +113,10 @@ export function makeIntersection(init = {}) {
     heads: init.heads ?? [],
     movements: init.movements ?? [],
     masts: init.masts ?? [],
-    plans: init.plans ?? [],
     createdAt: init.createdAt ?? now,
     updatedAt: now,
     rev: init.rev ?? 0,
   };
-}
-
-/** Head ids actually used by signalized movements. */
-export const usedHeadIds = (ix) =>
-  [...new Set(ix.movements.filter((m) => !m.unsignalized && m.headId).map((m) => m.headId))];
-
-export const cycleLengthMs = (phases) =>
-  phases.reduce((s, p) => s + Math.max(0, p.timing?.sec ?? 0) * 1000, 0);
-
-export function withCycleLength(plan) {
-  return { ...plan, cycleLengthMs: cycleLengthMs(plan.stages) };
 }
 
 /** @param {Intersection} ix @returns {string[]} problems; empty = OK */

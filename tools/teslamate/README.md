@@ -1,8 +1,17 @@
-# Infer traffic-light timings from TeslaMate
+# Cross-check Onda against TeslaMate GPS history
 
-A reusable, zero-dependency script that reads an **Onda export** (your defined
-intersections) plus a **TeslaMate GPS dump** and reconstructs, per defined head,
-a cycle length and green/red split — from your own months of driving.
+A reusable, zero-dependency script that reads an **Onda export** (your
+intersections and taps) plus a **TeslaMate GPS dump**. It does two things:
+
+1. **GPS-only estimates** per defined head (cycle length, green/red split) from
+   your months of driving. Diagnostics only: the app never reads them.
+2. **A backtest of the tap-based clock model** (`backtest.js`): the model is
+   built from the export's **taps only**, and each GPS-detected queue departure
+   is compared with the model's predicted green.
+
+**This is a cross-check, never an input.** GPS departures are too imprecise to
+define the timing model, so nothing this tool writes is meant to be imported
+into Onda (that would mix GPS onsets into the tap log).
 
 ## How it works (and what it can't do)
 
@@ -90,11 +99,21 @@ docker run --rm -v "$PWD":/app -w /app node:22-alpine \
 Outputs in `out/`:
 
 - **`report.md`** — the readable result, per intersection and head.
-- **`inferred-plans-export.json`** — your export with a GPS-derived plan attached
-  to each intersection (`rev` bumped). Import it in the **Sync** tab to preview
-  live predictions. It touches only `plans`; your structure is untouched.
-- **`inferred-observations.json`** — the synthesized green-onset observations
-  (tagged `source: "teslamate"`), kept for the record / future in-app use.
+  Part 1 is the GPS-only estimates; part 2 is the backtest.
+
+### Reading the backtest
+
+A car leaves *after* the light turns green (start-up ~2 s + ~2 s per car ahead),
+so a departure should land a small positive lag after the model's predicted
+green. Per light and plan the report gives: departures, how many **fit**
+(within 15 s after predicted green, or inside the model's own ± just before it),
+how many are **inconsistent**, and the **median lag** plus the **front-of-queue
+lag** (median of the earliest quarter, the trips with nobody ahead of you).
+Departures at hours or days the model can't predict (no taps then, needs a tap
+today, actuated) are counted separately, not as failures. **Contradictions** are
+departures outside the window while the model claimed ±3 s or better: the
+useful signal that a plan or cycle is wrong. The model is built from the same
+taps it is judged against, so an anchored day is not an out-of-sample test.
 
 ## Tuning
 
