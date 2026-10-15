@@ -46,7 +46,9 @@ const state = {
   state.intersections = await store.allIntersections();
   state.obs = await store.allObservations();
   noteLastTaps();
-  state.selectedId = store.getPref('selectedId', null);
+  // A manual pick lives only for this session: a remembered pick silently filed
+  // later taps under the wrong intersection. Clear what older builds saved.
+  try { localStorage.removeItem('onda.selectedId'); } catch { /* private mode */ }
   startGps();
   wireUi();
   // A bug in one tab must never stop boot: a throw here used to skip the render
@@ -405,7 +407,6 @@ function renderUpcoming(currentIx) {
     list.querySelectorAll('.row').forEach((r) => (r.onclick = () => {
       const id = r.dataset.id;
       state.selectedId = state.selectedId === id ? null : id; // toggle manual/auto
-      store.setPref('selectedId', state.selectedId);
       tick();
     }));
   }
@@ -442,7 +443,7 @@ function renderCapture() {
     const auto = `Auto — nearest by GPS${!state.selectedId && ix ? ` (${ix.name})` : ''}`;
     ixSel.innerHTML = `<option value="">${esc(auto)}</option>`
       + intersectionOptions(state.intersections, state.selectedId);
-    ixSel.onchange = () => { state.selectedId = ixSel.value || null; store.setPref('selectedId', state.selectedId); tick(); };
+    ixSel.onchange = () => { state.selectedId = ixSel.value || null; tick(); };
   }
 
   const heads = ix ? headsOf(ix) : [];
@@ -456,7 +457,7 @@ function renderCapture() {
     }
   } else {
     if (state.captureHead?.ixId !== ix.id || !heads.find((h) => h.id === state.captureHead?.id))
-      state.captureHead = { ixId: ix.id, id: heads[0].id };
+      state.captureHead = { ixId: ix.id, id: resolveActiveHead(ix, heads).id }; // the light facing you, not the first one
     const headKey = `${ix.id}#${heads.map((h) => h.id + ':' + h.label).join('|')}#${state.captureHead.id}`;
     if (sel.dataset.key !== headKey && document.activeElement !== sel) {
       sel.dataset.key = headKey;

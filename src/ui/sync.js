@@ -42,7 +42,7 @@ function render() {
       </div>
       <p id="sync-file-status" class="note"></p>
     </div>
-    <p class="note small">App version ${esc(self.ONDA_VERSION ?? '?')} — use the same version on both devices.</p>`;
+    <p class="note small">App version ${esc(self.ONDA_VERSION ?? '?')} — use the same version on both devices. Window ${innerWidth}×${innerHeight}.</p>`;
 }
 
 function idleHtml() {

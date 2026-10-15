@@ -195,21 +195,24 @@
       background: var(--panel); border: 1px solid var(--accent); box-shadow: 0 6px 24px #0005; font-weight: 600;
     }
     .update-banner span { flex: 1; }
-    /* ---- Car layout (Tesla browser: landscape, wide) ----
+    /* ---- Car layout (Tesla browser: landscape) ----
+       The Tesla browser window is narrower than 900 CSS px (the map takes part
+       of the screen), so key on landscape + enough height; the height floor
+       keeps a phone turned sideways (~400 px tall) on the phone layout. */
        Live becomes exactly two columns that fill the screen without scrolling:
        the scene with a huge, light-colored countdown | the loud tap buttons
        and what's coming up. Everything read while driving is 18 px or more. */
     .count[data-aspect="green"] { color: var(--green); }
     .count[data-aspect="red"] { color: var(--red); }
     .count[data-aspect="amber"], .count[data-aspect="flash-amber"] { color: var(--yellow); }
-    @media (min-width: 900px) and (min-aspect-ratio: 1/1) {
+    @media (min-width: 600px) and (min-height: 450px) and (min-aspect-ratio: 1/1) {
       .topbar { flex-wrap: nowrap; padding: 6px 0 8px; }
       .topbar .sub { flex: 0 1 auto; }
       .tabs { flex: 1; flex-basis: auto; margin-left: auto; max-width: 720px; }
       .tabs button { min-height: 44px; font-size: var(--fs-md); }
 
       #view-live.active { height: 100%; }
-      .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; height: 100%; min-height: 560px; padding-bottom: 12px; }
+      .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; height: 100%; min-height: 400px; padding-bottom: 12px; }
       .live-grid .scene-wrap { margin: 0; height: 100%; }
       .live-grid #live-scene { height: 100%; max-height: none; }
       .live-side { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
