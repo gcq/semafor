@@ -84,15 +84,17 @@ test('nudged controller (sigma 2 s): predicted from the clock, error about sigma
   assert.ok(errs[4] <= 3.5, `median error ${errs[4]}`);
 });
 
-test('independent days: unpredictable without a tap today, accurate right after one (also via withTap)', () => {
+test('independent days: a flagged guess without a tap today, accurate right after one (also via withTap)', () => {
   const sim = createSim({ seed: 15, controllers: [simple({ mode: 'independent' })] });
   for (let d = 0; d < 5; d++) for (const hm of ['08:30', '17:45'])
     sim.sit({ t: at(d, hm), watch: ['g', 'h'], aspects: ['green', 'red'], cycles: 4 });
   const m = computeModel(sim.world());
   assert.equal(plansOf(m, 'ixA')[0].clock.hypothesis, 'independent');
   const cold = nextOnset(m, 'g', 'green', at(6, '10:00'));
-  assert.equal(cold.unpredictable, true);
-  assert.match(cold.reason, /tap/);
+  assert.ok(!cold.unpredictable);
+  assert.equal(cold.guess, true);
+  assert.ok(cold.plusMinus <= 90.3 / 2);
+  assert.match(cold.basis, /guess/);
 
   // A single green tap today, near-minimum lag so the tolerance is about the model, not the thumb.
   const tap = sim.sit({ t: at(6, '10:00'), watch: ['g'], aspects: ['green'], maxTaps: 1, lag: { extraMeanSec: 0.05 } })[0];
@@ -105,6 +107,7 @@ test('independent days: unpredictable without a tap today, accurate right after 
   assert.ok(Math.abs(e2) <= 1.5, `recomputed error ${e2}`);
   const p = nextOnset(withTap(m, tap), 'g', 'green', now);
   assert.match(p.basis, /tap/);
+  assert.equal(p.guess, undefined);
   // Another colour of the same light is anchored by the same tap (needs it tapped before).
   const eh = predErr(sim, withTap(m, tap), 'g', 'red', now);
   assert.notEqual(eh, null);
@@ -143,7 +146,7 @@ test('corridor: a tap today at A anchors predictions at B', () => {
     assert.ok(Math.abs(e) <= 1.5, `B error ${e}`);
     assert.match(nextOnset(model, 'gb', 'green', now).basis, /tap/);
   }
-  assert.equal(nextOnset(m0, 'gb', 'green', now).unpredictable, true, 'but not without the tap');
+  assert.equal(nextOnset(m0, 'gb', 'green', now).guess, true, 'but only a guess without the tap');
 });
 
 test('time-of-day plans: two windows, different cycles, separate plans, no cross-contamination', () => {
@@ -177,7 +180,7 @@ test('time-of-day plans: two windows, different cycles, separate plans, no cross
   const mi = computeModel(ind.world());
   const am = predErr(ind, mi, 't', 'green', at(5, '10:30'));
   assert.ok(am != null && Math.abs(am) <= 1.5, `morning anchored ${am}`);
-  assert.equal(nextOnset(mi, 't', 'green', at(5, '20:30')).unpredictable, true, 'evening not anchored by a morning tap');
+  assert.equal(nextOnset(mi, 't', 'green', at(5, '20:30')).guess, true, 'evening not anchored by a morning tap');
 });
 
 test('a missed tap does not make a light actuated; a truly actuated light is flagged and unpredictable', () => {
@@ -283,4 +286,19 @@ test('perf: ~500 taps over 30 days, 6 intersections compute in < 1 s', () => {
   console.log(`perf: ${w.observations.length} taps, ${ms.toFixed(0)} ms`);
   assert.ok(ms < 1000, `computeModel took ${ms.toFixed(0)} ms`);
   assert.ok(m.groups.length >= 1);
+});
+
+test('independent plan: outside every window falls back to the nearest plan, flagged; actuated stays unpredictable', () => {
+  const sim = createSim({ seed: 16, controllers: [simple({ mode: 'independent' })] });
+  for (let d = 0; d < 5; d++) for (const hm of ['08:30', '17:45'])
+    sim.sit({ t: at(d, hm), watch: ['g', 'h'], aspects: ['green', 'red'], cycles: 4 });
+  const m = computeModel(sim.world());
+  const p = nextOnset(m, 'g', 'green', at(6, '03:00'));
+  assert.ok(!p.unpredictable, JSON.stringify(p));
+  assert.equal(p.guess, true);
+  assert.ok(p.plusMinus <= 90.3 / 2);
+  const a = structuredClone(m);
+  for (const pl of a.groups.flatMap((g) => g.plans)) for (const k of Object.keys(pl.marks)) pl.marks[k].actuated = true;
+  assert.equal(nextOnset(a, 'g', 'green', at(6, '10:00')).unpredictable, true);
+  assert.equal(nextOnset(m, 'nope', 'green', at(6, '10:00')).unpredictable, true);
 });

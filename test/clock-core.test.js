@@ -121,7 +121,7 @@ test('steady clock over 4 days predicts a day with no tap', () => {
   assert.ok(['green', 'amber', 'red'].includes(ca));
 });
 
-test('days that jump around: independent; needs a tap today, then predicts', () => {
+test('days that jump around: independent; a guess without a tap today, exact after one', () => {
   const shifts = [0, 17, -23, 31, 9];
   const w = world(70, (d) => shifts[d] ?? 0);
   const A = ix('i1', 'A');
@@ -133,8 +133,8 @@ test('days that jump around: independent; needs a tap today, then predicts', () 
   assert.equal(plan.clock.heldOutErrSec, null);
   const day5 = D0 + 4 * DAY;
   const q = nextOnset(model, 'A', 'green', day5 + 10 * MIN);
-  assert.equal(q.unpredictable, true);
-  assert.equal(q.reason, 'needs a tap today');
+  assert.ok(!q.unpredictable && q.guess === true, JSON.stringify(q));
+  assert.ok(q.plusMinus <= 35 && /guess/.test(q.basis), JSON.stringify(q));
   // an old model plus today's tap through withTap
   const t = changes(w, 0, day5 + 12 * MIN, day5 + 14 * MIN)[0];
   const tap = { headId: 'A', aspect: 'green', t: Math.round(t + 400) };
@@ -144,7 +144,7 @@ test('days that jump around: independent; needs a tap today, then predicts', () 
   assert.ok(!p.unpredictable, JSON.stringify(p));
   const truth = changes(w, 0, now, now + 100e3)[0];
   assert.ok(Math.abs(now + p.inSec * 1000 - truth) < 1.5e3);
-  assert.ok(nextOnset(model, 'A', 'green', now).unpredictable, 'withTap does not mutate the model');
+  assert.equal(nextOnset(model, 'A', 'green', now).guess, true, 'withTap does not mutate the model');
   // and the red, relative to that green
   const pr = nextOnset(m2, 'A', 'red', now);
   const truthR = changes(w, 48, now, now + 100e3)[0];
@@ -355,9 +355,8 @@ test('windows: only around a plan\'s own sittings; one plan per group at a time;
   for (const [h, m] of [['A', 8 * 60], ['B', 13 * 60], ['A', 150]]) {
     const now = D0 - 10 * H + (m - 8 * 60) * MIN + day;
     const p = nextOnset(model, h, 'green', now);
-    assert.equal(p.unpredictable, true);
-    assert.equal(p.reason, 'no taps at this time of day yet');
-    assert.equal(currentAspect(model, h, now), null);
+    assert.ok(!p.unpredictable && p.guess === true, JSON.stringify(p));
+    assert.match(p.basis, /other time of day/);
   }
   assert.ok(!nextOnset(model, 'A', 'green', D0 + day + 40 * MIN).unpredictable);
   assert.ok(model.usefulTaps.some((u) => /around 0\d:00/.test(u.why)), JSON.stringify(model.usefulTaps));

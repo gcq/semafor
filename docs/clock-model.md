@@ -109,15 +109,32 @@ Predicted change time of mark k on day d (no drift):
   - today's offset known (any tap today in the group's plan) -> `plusMinus` from
     lag (+ drift since that tap); basis like `'tap 4 min ago at <intersection>'`.
   - else `steady`/`nudged` -> offset 0, `plusMinus` includes σ; basis
-    `'clock from N days'`. `independent` -> unpredictable
-    `'needs a tap today'`. Actuated mark -> unpredictable `'actuated'`.
+    `'clock from N days'`. `independent` -> a **guess** (`guess: true`, basis
+    `'guess · no tap today'`): circular mean of the past days' offsets for the
+    mark's component, `plusMinus` = √(circular SD² + spread² + lag SD²) capped
+    at C/2 (offset 0 and C/2 with no past days). Actuated mark -> unpredictable
+    `'actuated'` (deliberately not predicted).
+  - no plan in force at `now`, or none with this mark -> the nearest plan by
+    window that has the mark, same logic, always `guess: true`, basis
+    `'guess · other time of day'`. Still unpredictable: no taps for the light,
+    no tap of that aspect in any plan.
 - `currentAspect(model, headId, now)` -> aspect, or `null` when the light has
-  fewer than 2 tapped colours (then the UI shows only the countdown).
+  fewer than 2 tapped colours (then the UI shows only the countdown) or a mark
+  is unpredictable (guessed heads do get a colour).
 - `phaseTable(model, intersectionId, now)` -> a legacy `TimingPlan`
   (`stages`, `epoch`, `cycleLengthMs`) built from mark positions, for the
   scene and editor preview; null if nothing is known.
 - `withTap(model, tap)` -> a cheap copy with today's day offset re-anchored on
   that tap (instant UI response before the full recompute lands).
+  `phaseTable` uses the same estimated offset when today's key is missing.
+- `guardAspect(prev, modelAspect, now, known)` (`src/predict/sequence.js`) — the
+  display guard: a head's shown colour only goes green→amber→red→green (over
+  the aspects it has). A model colour that is not the shown one's successor is
+  held; after 3 s of mismatch it steps one legal step (each stepped colour
+  shows ≥ 1 s first), so it converges in ≤ 2 steps. `off`/`flash-amber` pass
+  through; a user tap sets the shown colour at once. Live (scene + countdown)
+  goes through it via `aspectNow`; Analyze/editor previews don't.
+- Live shows a guess in dimmed italics with `±N s · guess · …` as caption.
 
 ## Running it (UI)
 

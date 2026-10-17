@@ -37,9 +37,10 @@ export function compareOnsets(model, onsets, opt = {}) {
   };
   for (const { headId, t } of onsets) {
     const p = predictMark(model, headId, 'green', t);
-    if (p.unpredictable) {
+    if (p.unpredictable || p.guess) { // a guess is not a prediction worth scoring
       const r = row(headId, null);
-      r.n++; r.unpredictable[p.reason] = (r.unpredictable[p.reason] ?? 0) + 1;
+      const why = p.reason ?? p.basis;
+      r.n++; r.unpredictable[why] = (r.unpredictable[why] ?? 0) + 1;
       continue;
     }
     const C = p.plan.cycleSec;

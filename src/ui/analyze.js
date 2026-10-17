@@ -54,8 +54,8 @@ function clockWords(c) {
   if (c.hypothesis === 'steady') return `Steady clock: the same timing every day (${days}). A tap today is not needed.`;
   if (c.hypothesis === 'nudged') return `The clock drifts about ±${fmt(c.nudgeSigmaSec)} s from one day to the next (${days}); a tap today tightens the prediction.`;
   return (c.days ?? 0) < 3
-    ? `Not enough data to tell if the timing repeats from day to day (${days}, need 3). For now each day needs its own tap.`
-    : `Days look unrelated (${days}): this light needs a tap each day before it can be predicted.`;
+    ? `Not enough data to tell if the timing repeats from day to day (${days}, need 3). A tap today makes it exact; until then it's a guess.`
+    : `Days look unrelated (${days}): a tap today makes it exact; until then it's a guess.`;
 }
 
 function groupHtml(g, model, { ixOf, lightName, tapById }) {

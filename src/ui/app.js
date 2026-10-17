@@ -3,6 +3,7 @@
 
 import * as store from '../store/db.js';
 import { nextOnset, currentAspect, phaseTable, withTap } from '../predict/next.js';
+import { guardAspect, tapped } from '../predict/sequence.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
@@ -32,6 +33,7 @@ const state = {
   modelKey: null,          // cache key of the inputs `model` was computed from (null = withTap'd / stale)
   modelStatus: 'none',     // 'none' | 'uptodate' | 'recomputing'
   lastTaps: {},            // headId -> { t, aspect }: echo of your last tap on a light
+  shown: new Map(),        // headId -> { aspect, sinceMs, stepAt? }: the colour the sequence guard shows
   tables: new Map(),       // phaseTable memo: `${ixId}` -> { model, minute, table }
   lastIxId: null,          // to reset the manual head pick when the intersection changes
   lastObs: null,           // { id, ixId } for undo
@@ -232,9 +234,15 @@ function tableFor(ixId, now) {
   return table;
 }
 
+// The colour shown for a head: the model's, filtered so it only goes green -> amber -> red -> green.
 const aspectNow = (hid, now) => {
   if (!state.model) return null;
-  try { return currentAspect(state.model, hid, now) ?? null; } catch { return null; }
+  let model = null;
+  try { model = currentAspect(state.model, hid, now) ?? null; } catch { return null; }
+  const prev = state.shown.get(hid) ?? null;
+  const next = guardAspect(prev, model, now, state.model.lights?.[hid]?.aspects ?? []);
+  if (next) state.shown.set(hid, next); else state.shown.delete(hid);
+  return next?.aspect ?? null;
 };
 
 // Direction you're approaching the junction from. The bearing from you to its
@@ -281,7 +289,6 @@ function renderLive(ix) {
 }
 
 const REASONS = {
-  'needs a tap today': 'needs a tap today — tap this light when it turns green',
   actuated: 'sensor-controlled light · not predicted',
 };
 
@@ -291,9 +298,10 @@ const REASONS = {
 function renderCountdown(active, now) {
   const num = $('count-num'), cap = $('count-cap'), ind = $('ind-label'), box = $('count');
   const unit = box.querySelector('.unit');
-  const show = (label, n, caption, aspect) => {
+  const show = (label, n, caption, aspect, guess) => {
     ind.textContent = label; num.textContent = n; cap.textContent = caption;
     box.dataset.aspect = aspect ?? ''; unit.hidden = n === '--';
+    if (guess) box.dataset.guess = '1'; else delete box.dataset.guess;
   };
   if (!active) return show('—', '--', '', null);
   if (!state.model) return show('Learning', '--', state.obs.length ? 'working it out…' : 'tap colors to learn', null);
@@ -310,7 +318,7 @@ function renderCountdown(active, now) {
   }
   const pm = pred.plusMinus >= 0.5 ? `±${Math.round(pred.plusMinus)} s` : '';
   show(curLabel ? `${curLabel} now · green in` : 'Green in', String(Math.max(0, Math.round(pred.inSec))),
-    [pm, pred.basis].filter(Boolean).join(' · '), cur);
+    [pm, pred.basis].filter(Boolean).join(' · '), cur, pred.guess);
 }
 
 const LAST_TAP_ECHO_MS = 10 * 60 * 1000;
@@ -490,6 +498,7 @@ async function logAspect(intersectionId, headId, aspect) {
   await store.addObservation(ev);
   state.obs = [...state.obs, ev];
   state.lastTaps[headId] = { t: ev.t, aspect };
+  state.shown.set(headId, tapped(aspect, ev.t));
   state.lastObs = { id: ev.id, ixId: intersectionId };
   const head = headsOf(ix).find((h) => h.id === headId);
   state.captureLog.push({ id: ev.id, t: ev.t, aspect, head: head?.label ?? headId, ix: ix.name });

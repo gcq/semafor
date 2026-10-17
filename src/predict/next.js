@@ -39,6 +39,21 @@ function findLight(model, headId) {
 
 const offKey = (plan, mark, day) => (plan.clock.hypothesis === 'independent' && (plan.marks[mark]?.comp ?? 0) !== 0 ? `${day}#${plan.marks[mark].comp}` : day);
 
+// Today's offset for an independent plan with no tap yet: circular mean (on the cycle) of the
+// past days' offsets for the same component. n = 0 -> offset 0, sd = C/2 (no idea).
+function estOffset(ck, key, C) {
+  const suffix = key.split('#')[1] ?? '';
+  let s = 0, c = 0, n = 0;
+  for (const [k, v] of Object.entries(ck.dayOffsets ?? {})) {
+    if (k === key || (k.split('#')[1] ?? '') !== suffix) continue;
+    s += Math.sin((2 * Math.PI * v) / C); c += Math.cos((2 * Math.PI * v) / C); n++;
+  }
+  if (!n) return { off: 0, sd: C / 2, n };
+  const R = Math.min(1, Math.hypot(s, c) / n);
+  const sd = R < 1e-9 ? C / 2 : Math.min(C / 2, Math.sqrt(-2 * Math.log(R)) * C / (2 * Math.PI));
+  return { off: (Math.atan2(s, c) * C) / (2 * Math.PI), sd, n };
+}
+
 const agoText = (ms) => {
   const m = Math.round(ms / 60000);
   return m < 1 ? 'just now' : m < 90 ? `${m} min ago` : m < 36 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
@@ -46,17 +61,16 @@ const agoText = (ms) => {
 
 /**
  * Where one mark stands at `now`: its next and previous change, and how sure.
- * @returns {{ unpredictable: true, reason: string } | { nextMs, lastMs, plusMinus, basis, planId, plan, mark }}
+ * `guess: true` marks a best estimate with no tap today (or from another time of day's plan).
+ * @returns {{ unpredictable: true, reason: string } | { nextMs, lastMs, plusMinus, basis, planId, plan, mark, guess? }}
  */
 export function predictMark(model, headId, aspect, now) {
   const f = findLight(model, headId);
   if (!f) return { unpredictable: true, reason: 'no taps for this light' };
   const mark = `${headId}|${aspect}`;
   if (!f.group.plans.some((p) => p.marks[mark])) return { unpredictable: true, reason: `no ${aspect} tap in a known plan yet` };
-  const inForce = planInForce(f.group, now);
-  if (!inForce) return { unpredictable: true, reason: 'no taps at this time of day yet' };
-  const plan = inForce;
-  if (!plan.marks[mark]) return { unpredictable: true, reason: 'no taps on this light at this time of day' };
+  let plan = planInForce(f.group, now), guess = false;
+  if (!plan?.marks[mark]) { plan = pickPlan(f.group.plans.filter((p) => p.marks[mark]), now); guess = true; }
   const m = plan.marks[mark], ck = plan.clock, C = plan.cycleSec;
   if (m.actuated) return { unpredictable: true, reason: 'actuated' };
   const day = dayKeyOf(now), key = offKey(plan, mark, day);
@@ -73,7 +87,10 @@ export function predictMark(model, headId, aspect, now) {
     const ixName = tap ? model.names?.[tap.ixId] ?? tap.ixId : null;
     basis = tap ? `tap ${agoText(agoMs)}${ixName ? ` at ${ixName}` : ''}` : 'tap today';
   } else if (ck.hypothesis === 'independent') {
-    return { unpredictable: true, reason: 'needs a tap today' };
+    const e = estOffset(ck, key, C);
+    off = e.off; guess = true;
+    pm = e.n ? Math.min(C / 2, Math.sqrt(e.sd ** 2 + m.spreadSec ** 2 + lagSd(model) ** 2)) : C / 2;
+    basis = 'guess · no tap today';
   } else {
     const sigma = ck.hypothesis === 'nudged' ? ck.nudgeSigmaSec ?? 3 : ck.residRmsSec ?? 1;
     const cycles = Math.abs(now - ck.epochMs) / 1000 / C;
@@ -81,19 +98,20 @@ export function predictMark(model, headId, aspect, now) {
     pm = Math.max(pm, ck.heldOutErrSec ?? 0);
     basis = `clock from ${ck.days} days`;
   }
+  if (guess && basis !== 'guess · no tap today') basis = 'guess · other time of day';
   const Cms = C * 1000, base = ck.epochMs + 1000 * (off + m.posSec);
   const nextMs = base + Math.ceil((now - base) / Cms) * Cms;
-  return { nextMs, lastMs: nextMs - Cms, plusMinus: Math.max(0.5, round1(pm)), basis, planId: plan.id, plan, mark };
+  return { nextMs, lastMs: nextMs - Cms, plusMinus: Math.max(0.5, round1(pm)), basis, planId: plan.id, plan, mark, ...(guess && { guess }) };
 }
 
 /**
  * When does this light next change to `aspect`?
- * @returns {{ inSec:number, plusMinus:number, basis:string, planId:string } | { unpredictable:true, reason:string }}
+ * @returns {{ inSec:number, plusMinus:number, basis:string, planId:string, guess?:true } | { unpredictable:true, reason:string }}
  */
 export function nextOnset(model, headId, aspect = 'green', now = Date.now()) {
   const p = predictMark(model, headId, aspect, now);
   if (p.unpredictable) return p;
-  return { inSec: round1((p.nextMs - now) / 1000), plusMinus: p.plusMinus, basis: p.basis, planId: p.planId };
+  return { inSec: round1((p.nextMs - now) / 1000), plusMinus: p.plusMinus, basis: p.basis, planId: p.planId, ...(p.guess && { guess: true }) };
 }
 
 /**
@@ -171,7 +189,7 @@ export function phaseTable(model, intersectionId, now = Date.now()) {
   const drift = C - stages.reduce((a, s) => a + s.timing.sec, 0);
   stages[stages.length - 1].timing.sec = round1(stages[stages.length - 1].timing.sec + drift);
   const key = comp !== 0 && ck.hypothesis === 'independent' ? `${dayKeyOf(now)}#${comp}` : dayKeyOf(now);
-  const off = ck.dayOffsets[key] ?? 0, Cms = C * 1000;
+  const off = ck.dayOffsets[key] ?? (ck.hypothesis === 'independent' ? estOffset(ck, key, C).off : 0), Cms = C * 1000;
   const base = ck.epochMs + 1000 * (off + bounds[0].pos);
   const epoch = Math.round(base + Math.floor((now - base) / Cms) * Cms);
   const unpredictableHeads = full.filter(([, l]) => l.some((m) => m.actuated)).map(([h]) => h);
