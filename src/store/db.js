@@ -10,7 +10,7 @@
 import { mergeBundles } from '../sync/merge.js';
 
 const DB_NAME = 'onda';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 // `plans` / `headPositions` on an intersection are derived data from old
 // versions (the clock model recomputes timing from taps alone). Strip them
@@ -44,6 +44,9 @@ function open() {
       // Derived data only: never exported, never synced, safe to drop at any time.
       if (!db.objectStoreNames.contains('modelCache'))
         db.createObjectStore('modelCache', { keyPath: 'key' });
+      // v5: street geometry (osm2streets lanes / plain lines) per junction cluster. Derived, same rules.
+      if (!db.objectStoreNames.contains('streets'))
+        db.createObjectStore('streets', { keyPath: 'id' });
       // v4: one-time cleanup of legacy derived fields already stored
       if (ev.oldVersion > 0 && ev.oldVersion < 4) {
         const cur = req.transaction.objectStore('intersections').openCursor();
@@ -145,6 +148,11 @@ export async function modelKey(observations, intersections, algoVersion) {
 /** The cached { key, model } (at most one entry), or null. */
 export const loadModelCache = async () => (await tx('modelCache', 'readonly', (s) => reqValue(s.modelCache.getAll())))?.[0] ?? null;
 export const saveModelCache = (key, model) => tx('modelCache', 'readwrite', (s) => { s.modelCache.clear(); s.modelCache.put({ key, model }); });
+
+// --- street geometry cache (derived; one entry per junction cluster, see osm/lanes-cache.js) ---
+export const allStreets = () => tx('streets', 'readonly', (s) => reqValue(s.streets.getAll()));
+export const putStreets = (entry) => tx('streets', 'readwrite', (s) => { s.streets.put(entry); });
+export const deleteStreets = (id) => tx('streets', 'readwrite', (s) => { s.streets.delete(id); });
 
 // --- prefs (localStorage, best-effort) ---
 export function getPref(key, fallback = null) {

@@ -2,13 +2,17 @@
 // store, and paints the DOM on a timer. No framework.
 
 import * as store from '../store/db.js';
-import { nextOnset, currentAspect, phaseTable, withTap } from '../predict/next.js';
+import { nextOnset, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
 import { guardAspect, tapped } from '../predict/sequence.js';
 import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
 import { mergeBundles } from '../sync/merge.js';
+import { createStreetFeed } from '../osm/lanes-cache.js';
+import { fetchOsmXml } from '../osm/lanes.js';
+import { computeLanes } from '../osm/lanes-client.js';
+import { fetchStreets } from '../osm/streets.js';
 import { drawScene } from './live-scene.js';
 import { esc, icon, intersectionOptions } from './dom.js';
 import { mountEditor, refreshEditor } from './editor.js';
@@ -40,6 +44,15 @@ const state = {
   sceneBoxes: [],          // canvas hit boxes from the last draw
 };
 
+// Street geometry for the Live scene: derived, cached on-device, built in the
+// background (osm2streets lanes, plain lines as fallback). Never blocks boot or
+// render; with nothing cached yet Live just draws without streets.
+const streetFeed = createStreetFeed({
+  loadAll: store.allStreets, save: store.putStreets, remove: store.deleteStreets,
+  fetchXml: fetchOsmXml, computeLanes, fetchPlain: fetchStreets,
+});
+const refreshStreets = () => streetFeed.check(state.intersections).catch((e) => console.log('[streets]', e?.message ?? e));
+
 // ---------- boot ----------
 (async function boot() {
   // Ask the browser not to evict our IndexedDB under storage pressure (Safari
@@ -64,6 +77,10 @@ const state = {
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
+  safe('streets', () => {
+    refreshStreets(); // after the first render; loads the cache, then queues what's stale
+    window.addEventListener('online', () => streetFeed.online().catch(() => {}));
+  });
 })();
 
 // Service worker: offline cache + update checks. No automatic reloads (they
@@ -245,6 +262,34 @@ const aspectNow = (hid, now) => {
   return next?.aspect ?? null;
 };
 
+// Approach tint (Live scene): the colour of a head washed over its approach lanes, weaker
+// the less the prediction can be trusted so a guess never looks like fact. Strength is the
+// alpha at the stop line. A head is 'reliable' when every colour is anchored (no guess) and
+// its worst ± is within RELIABLE_PM_SEC (about as precise as tap-timed lights get), 'rough'
+// up to ROUGH_PM_SEC (right phase, change time a few seconds off), else 'unreliable'; any
+// best-estimate "guess" is unreliable regardless of its ±.
+const TINT_STRENGTH = { reliable: 0.45, rough: 0.3, unreliable: 0.18 };
+const RELIABLE_PM_SEC = 3;
+const ROUGH_PM_SEC = 8;
+
+// {aspect, strength} to tint a head's approach with, or null: no model, colour not known,
+// or the light is sensor-controlled / unpredictable (then the colour shown is not a claim we can make).
+function tintFor(hid, now) {
+  const light = state.model?.lights?.[hid];
+  if (!light || light.actuated?.length) return null;
+  const aspect = aspectNow(hid, now);
+  if (!aspect || aspect === 'off') return null;
+  let guess = false, pm = 0;
+  for (const a of light.aspects) {
+    let p = null;
+    try { p = predictMark(state.model, hid, a, now); } catch { return null; }
+    if (p.unpredictable) return null;
+    guess ||= !!p.guess; pm = Math.max(pm, p.plusMinus);
+  }
+  const rel = guess || pm > ROUGH_PM_SEC ? 'unreliable' : pm > RELIABLE_PM_SEC ? 'rough' : 'reliable';
+  return { aspect, strength: TINT_STRENGTH[rel] };
+}
+
 // Direction you're approaching the junction from. The bearing from you to its
 // centre is right even when stopped (GPS course is null then), so prefer it until
 // you're basically in the box; fall back to the live/frozen course.
@@ -279,7 +324,15 @@ function renderLive(ix) {
   const ego = state.pos;
   const upDeg = approachBearing(ix) ?? 0;
   const canvas = $('live-scene');
-  if (canvas && canvas.clientWidth) state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null });
+  if (canvas && canvas.clientWidth) {
+    // other junctions of this cluster: lights only (their streets are in the shared entry)
+    const neighbors = streetFeed.neighborIds(ix.id)
+      .map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)
+      .map((n) => ({ ix: n, aspectOf: (hid) => aspectNow(hid, now) ?? 'off' }));
+    const tints = new Map(); // one evaluation per head per frame (several approaches can share a head)
+    const tintOf = (_ixId, hid) => { if (!tints.has(hid)) tints.set(hid, tintFor(hid, now)); return tints.get(hid); };
+    state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null, streets: streetFeed.get(ix.id), neighbors, tintOf });
+  }
 
   renderCountdown(active, now);
   renderLiveMeta(active, now);
@@ -528,6 +581,7 @@ async function reloadData() {
   state.obs = await store.allObservations();
   noteLastTaps();
   scheduleRecompute(); // new data (sync/import/map edit): same key -> instant no-op
+  refreshStreets(); // new or moved junction -> streets queued in the background
   refreshEditor();
   refreshAnalyze();
   tick();

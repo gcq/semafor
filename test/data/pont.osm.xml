@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="Overpass API">
+<node id="309002550" lat="41.4075526" lon="2.0154873" version="1"/>
+<node id="309002560" lat="41.4103697" lon="2.0138748" version="1"/>
+<node id="309002566" lat="41.4116658" lon="2.0131477" version="1"/>
+<node id="309002568" lat="41.4132465" lon="2.0122941" version="1"/>
+<node id="309002591" lat="41.4156680" lon="2.0109221" version="1"/>
+<node id="309013024" lat="41.4073933" lon="2.0153470" version="1"/>
+<node id="309013042" lat="41.4155751" lon="2.0106751" version="1"/>
+<node id="309013121" lat="41.4116047" lon="2.0129764" version="1"/>
+<node id="309013133" lat="41.4103086" lon="2.0137035" version="1"/>
+<node id="309013393" lat="41.4131854" lon="2.0120949" version="1"/>
+<node id="361196046" lat="41.4143388" lon="2.0124141" version="1"/>
+<node id="392907488" lat="41.4142707" lon="2.0118981" version="1"/>
+<node id="394824639" lat="41.4144141" lon="2.0132140" version="1"/>
+<node id="395511103" lat="41.4144523" lon="2.0140525" version="1"/>
+<node id="418638106" lat="41.4137895" lon="2.0126726" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="crossing:signals" v="yes"/><tag k="highway" v="crossing"/></node>
+<node id="418638107" lat="41.4137837" lon="2.0125634" version="1"/>
+<node id="418638637" lat="41.4108919" lon="2.0145752" version="1"/>
+<node id="418638638" lat="41.4122956" lon="2.0135047" version="1"/>
+<node id="418638639" lat="41.4133691" lon="2.0128333" version="1"/>
+<node id="428639550" lat="41.4152349" lon="2.0127026" version="1"/>
+<node id="444875364" lat="41.4153793" lon="2.0118000" version="1"/>
+<node id="446280610" lat="41.4141586" lon="2.0107774" version="1"/>
+<node id="446280611" lat="41.4139158" lon="2.0108610" version="1"/>
+<node id="446280612" lat="41.4136281" lon="2.0110107" version="1"/>
+<node id="446280613" lat="41.4132709" lon="2.0112808" version="1"/>
+<node id="446280614" lat="41.4128662" lon="2.0116437" version="1"/>
+<node id="446280615" lat="41.4119753" lon="2.0124761" version="1"/>
+<node id="446280616" lat="41.4118936" lon="2.0125359" version="1"/>
+<node id="446280622" lat="41.4141702" lon="2.0114594" version="1"/>
+<node id="446280623" lat="41.4141353" lon="2.0117958" version="1"/>
+<node id="555240483" lat="41.4183980" lon="2.0095727" version="1"/>
+<node id="555240505" lat="41.4127896" lon="2.0130421" version="1"/>
+<node id="555240526" lat="41.4137481" lon="2.0124462" version="1"/>
+<node id="555240533" lat="41.4143007" lon="2.0121091" version="1"/>
+<node id="555240550" lat="41.4193012" lon="2.0091062" version="1"/>
+<node id="583263327" lat="41.4101250" lon="2.0152675" version="1"/>
+<node id="583263523" lat="41.4107520" lon="2.0146098" version="1"/>
+<node id="583263812" lat="41.4122384" lon="2.0135522" version="1"/>
+<node id="607473552" lat="41.4129178" lon="2.0126081" version="1"/>
+<node id="607473555" lat="41.4123904" lon="2.0129465" version="1"/>
+<node id="607473580" lat="41.4102740" lon="2.0151019" version="1"/>
+<node id="607473585" lat="41.4117668" lon="2.0133937" version="1"/>
+<node id="607473591" lat="41.4142074" lon="2.0112983" version="1"/>
+<node id="607473594" lat="41.4138375" lon="2.0120849" version="1"/>
+<node id="607473597" lat="41.4144422" lon="2.0116209" version="1"/>
+<node id="1136387586" lat="41.4173837" lon="2.0101961" version="1"/>
+<node id="1136387890" lat="41.4124162" lon="2.0120731" version="1"/>
+<node id="1136388070" lat="41.4195179" lon="2.0090110" version="1"/>
+<node id="1136388434" lat="41.4127326" lon="2.0121574" version="1"/>
+<node id="1136388501" lat="41.4197413" lon="2.0089188" version="1"/>
+<node id="1136388657" lat="41.4138975" lon="2.0115695" version="1"/>
+<node id="1136389059" lat="41.4131215" lon="2.0119549" version="1"/>
+<node id="1136389535" lat="41.4121898" lon="2.0122926" version="1"/>
+<node id="1136389649" lat="41.4119883" lon="2.0125656" version="1"/>
+<node id="1136389996" lat="41.4134079" lon="2.0118068" version="1"/>
+<node id="1136390591" lat="41.4123401" lon="2.0123664" version="1"/>
+<node id="1136390594" lat="41.4199968" lon="2.0088233" version="1"/>
+<node id="1136390704" lat="41.4163531" lon="2.0108347" version="1"/>
+<node id="1136390866" lat="41.4136757" lon="2.0116685" version="1"/>
+<node id="1136391037" lat="41.4188699" lon="2.0093188" version="1"/>
+<node id="1136391606" lat="41.4116873" lon="2.0127374" version="1"/>
+<node id="1809463101" lat="41.4144991" lon="2.0121261" version="1"/>
+<node id="1809463138" lat="41.4153529" lon="2.0117024" version="1"/>
+<node id="1809463157" lat="41.4145793" lon="2.0122610" version="1"/>
+<node id="1809463168" lat="41.4168441" lon="2.0105305" version="1"/>
+<node id="4194641733" lat="41.4138145" lon="2.0136094" version="1"/>
+<node id="4194641734" lat="41.4138116" lon="2.0134966" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5287415882" lat="41.4152444" lon="2.0128825" version="1"><tag k="crossing" v="uncontrolled"/><tag k="crossing:markings" v="zebra"/><tag k="crossing:signals" v="no"/><tag k="highway" v="crossing"/></node>
+<node id="5287415885" lat="41.4150978" lon="2.0127857" version="1"><tag k="crossing" v="uncontrolled"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5287415886" lat="41.4152519" lon="2.0118670" version="1"><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5287415887" lat="41.4145705" lon="2.0131133" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5398532444" lat="41.4144324" lon="2.0133697" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5398532445" lat="41.4143012" lon="2.0132925" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5398532446" lat="41.4143885" lon="2.0129804" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5398532447" lat="41.4141595" lon="2.0121944" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5398532448" lat="41.4141872" lon="2.0122810" version="1"><tag k="crossing" v="traffic_signals"/><tag k="crossing:markings" v="zebra"/><tag k="highway" v="crossing"/></node>
+<node id="5952708105" lat="41.4153261" lon="2.0116753" version="1"><tag k="direction" v="forward"/><tag k="highway" v="give_way"/><tag k="side" v="right"/><tag k="traffic_sign" v="ES:R1"/></node>
+<node id="5952708106" lat="41.4153008" lon="2.0116565" version="1"/>
+<node id="5952708107" lat="41.4152628" lon="2.0116548" version="1"/>
+<node id="5952708109" lat="41.4152312" lon="2.0116698" version="1"/>
+<node id="5952708110" lat="41.4143773" lon="2.0121183" version="1"/>
+<node id="5952708111" lat="41.4144277" lon="2.0121228" version="1"/>
+<node id="5952708112" lat="41.4143056" lon="2.0123381" version="1"/>
+<node id="5952708113" lat="41.4142819" lon="2.0122980" version="1"/>
+<node id="5952708114" lat="41.4142480" lon="2.0122681" version="1"/>
+<node id="5952708115" lat="41.4142195" lon="2.0122687" version="1"/>
+<node id="5952708117" lat="41.4142675" lon="2.0122798" version="1"/>
+<node id="5954525487" lat="41.4134656" lon="2.0111260" version="1"/>
+<node id="5954525488" lat="41.4137917" lon="2.0109168" version="1"/>
+<node id="5954525489" lat="41.4140343" lon="2.0108152" version="1"/>
+<node id="5954527230" lat="41.4093409" lon="2.0144637" version="1"/>
+<node id="5954527231" lat="41.4090408" lon="2.0146355" version="1"/>
+<node id="5954527232" lat="41.4092804" lon="2.0142831" version="1"/>
+<node id="5954527233" lat="41.4089830" lon="2.0144508" version="1"/>
+<node id="5954527235" lat="41.4144188" lon="2.0113241" version="1"/>
+<node id="5954527238" lat="41.4141897" lon="2.0117648" version="1"/>
+<node id="5969690632" lat="41.4115148" lon="2.0140721" version="1"/>
+<node id="5969690633" lat="41.4116708" lon="2.0139317" version="1"/>
+<node id="5969690634" lat="41.4129932" lon="2.0130708" version="1"/>
+<node id="5969690635" lat="41.4138439" lon="2.0125094" version="1"/>
+<node id="5969690636" lat="41.4138661" lon="2.0124916" version="1"/>
+<node id="5969690637" lat="41.4108235" lon="2.0146030" version="1"/>
+<node id="6050267528" lat="41.4145453" lon="2.0122356" version="1"/>
+<node id="6050267529" lat="41.4146205" lon="2.0122572" version="1"/>
+<node id="6050267542" lat="41.4116228" lon="2.0139746" version="1"/>
+<node id="6050267544" lat="41.4115571" lon="2.0140389" version="1"/>
+<node id="6050267545" lat="41.4116420" lon="2.0139556" version="1"/>
+<node id="6050267546" lat="41.4108597" lon="2.0145931" version="1"/>
+<node id="6050267551" lat="41.4112034" lon="2.0143095" version="1"/>
+<node id="6050267552" lat="41.4109292" lon="2.0145435" version="1"/>
+<node id="6073976266" lat="41.4120687" lon="2.0131655" version="1"/>
+<node id="6073976267" lat="41.4122273" lon="2.0130545" version="1"/>
+<node id="9711669013" lat="41.4141735" lon="2.0109325" version="1"><tag k="crossing" v="no"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals:direction" v="backward"/></node>
+<node id="12261084759" lat="41.4120646" lon="2.0127200" version="1"><tag k="distance" v="11"/><tag k="highway" v="milestone"/><tag k="ref" v="B-23"/></node>
+<node id="12261084760" lat="41.4121219" lon="2.0129014" version="1"><tag k="distance" v="11"/><tag k="highway" v="milestone"/><tag k="ref" v="B-23"/></node>
+<node id="12896909500" lat="41.4144780" lon="2.0133385" version="1"/>
+<node id="12896954601" lat="41.4146040" lon="2.0132110" version="1"/>
+<node id="12896954602" lat="41.4143363" lon="2.0129899" version="1"/>
+<node id="12896954603" lat="41.4144482" lon="2.0129696" version="1"/>
+<node id="12896954604" lat="41.4142731" lon="2.0123688" version="1"/>
+<node id="12896954605" lat="41.4143991" lon="2.0125388" version="1"/>
+<node id="12896954606" lat="41.4145444" lon="2.0130369" version="1"/>
+<node id="12896954607" lat="41.4150722" lon="2.0127102" version="1"/>
+<node id="12896954608" lat="41.4151314" lon="2.0128849" version="1"/>
+<node id="12896954609" lat="41.4152851" lon="2.0128800" version="1"/>
+<node id="12896954610" lat="41.4153033" lon="2.0128789" version="1"/>
+<node id="12896954612" lat="41.4152133" lon="2.0128843" version="1"/>
+<node id="12896954613" lat="41.4151979" lon="2.0128853" version="1"/>
+<node id="12896954614" lat="41.4152305" lon="2.0135341" version="1"/>
+<node id="12896954615" lat="41.4152006" lon="2.0129391" version="1"/>
+<node id="12896954616" lat="41.4151790" lon="2.0128597" version="1"/>
+<node id="12896954617" lat="41.4151937" lon="2.0128702" version="1"/>
+<node id="12896954618" lat="41.4151871" lon="2.0128634" version="1"/>
+<node id="12896954619" lat="41.4151697" lon="2.0128613" version="1"/>
+<node id="12896954620" lat="41.4144604" lon="2.0130037" version="1"/>
+<node id="12896954621" lat="41.4144856" lon="2.0130301" version="1"/>
+<node id="12896954622" lat="41.4145148" lon="2.0130402" version="1"/>
+<node id="12896954624" lat="41.4144793" lon="2.0133599" version="1"/>
+<node id="12896954625" lat="41.4144854" lon="2.0132842" version="1"/>
+<node id="12896954626" lat="41.4144761" lon="2.0133056" version="1"/>
+<node id="12896954627" lat="41.4144803" lon="2.0132897" version="1"/>
+<node id="12896954628" lat="41.4144770" lon="2.0132966" version="1"/>
+<node id="12896954629" lat="41.4146391" lon="2.0132666" version="1"/>
+<node id="12896954630" lat="41.4146168" lon="2.0132030" version="1"/>
+<node id="12896954631" lat="41.4151491" lon="2.0129691" version="1"/>
+<node id="12896954632" lat="41.4151206" lon="2.0128916" version="1"/>
+<node id="12896954637" lat="41.4143364" lon="2.0133990" version="1"/>
+<node id="12896954638" lat="41.4142855" lon="2.0132450" version="1"/>
+<node id="12896954639" lat="41.4143237" lon="2.0132190" version="1"/>
+<node id="12896954640" lat="41.4143490" lon="2.0131138" version="1"/>
+<node id="12896954641" lat="41.4143517" lon="2.0131406" version="1"/>
+<node id="12896954642" lat="41.4143360" lon="2.0132041" version="1"/>
+<node id="12896954643" lat="41.4143507" lon="2.0131626" version="1"/>
+<node id="12896954644" lat="41.4143443" lon="2.0131866" version="1"/>
+<node id="12896954649" lat="41.4141448" lon="2.0121483" version="1"/>
+<node id="12896954650" lat="41.4141748" lon="2.0122424" version="1"/>
+<node id="12896954651" lat="41.4141827" lon="2.0122669" version="1"/>
+<node id="12896954652" lat="41.4142051" lon="2.0123371" version="1"/>
+<node id="12896954653" lat="41.4138717" lon="2.0125476" version="1"/>
+<node id="12896954654" lat="41.4142363" lon="2.0123339" version="1"/>
+<node id="12896954655" lat="41.4142581" lon="2.0123449" version="1"/>
+<node id="12908666026" lat="41.4151563" lon="2.0112138" version="1"/>
+<node id="12908666039" lat="41.4050863" lon="2.0169103" version="1"/>
+<node id="12920061687" lat="41.4135841" lon="2.0110419" version="1"/>
+<node id="12920061688" lat="41.4135544" lon="2.0110630" version="1"/>
+<node id="12922811831" lat="41.4141282" lon="2.0122136" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/></node>
+<node id="12922811832" lat="41.4142618" lon="2.0118139" version="1"><tag k="crossing" v="no"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12922811833" lat="41.4143333" lon="2.0123658" version="1"><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="backward"/></node>
+<node id="12922811834" lat="41.4141678" lon="2.0122934" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/></node>
+<node id="12922811835" lat="41.4143652" lon="2.0127155" version="1"/>
+<node id="12922811836" lat="41.4144341" lon="2.0134271" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12922811837" lat="41.4145983" lon="2.0130961" version="1"><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12922811838" lat="41.4143862" lon="2.0129546" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12922811839" lat="41.4142842" lon="2.0133035" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12960247909" lat="41.4137903" lon="2.0127016" version="1"><tag k="crossing" v="traffic_signals"/><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/><tag k="traffic_signals:direction" v="forward"/></node>
+<node id="12960247910" lat="41.4136705" lon="2.0126426" version="1"><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/></node>
+<node id="12960247911" lat="41.4136623" lon="2.0124996" version="1"><tag k="highway" v="traffic_signals"/><tag k="traffic_signals" v="signal"/></node>
+<node id="12960247912" lat="41.4134811" lon="2.0126122" version="1"/>
+<node id="12960247913" lat="41.4140463" lon="2.0122637" version="1"/>
+<node id="12960247914" lat="41.4140523" lon="2.0122601" version="1"/>
+<node id="12960247916" lat="41.4196296" lon="2.0089649" version="1"/>
+<node id="12960247917" lat="41.4201254" lon="2.0087771" version="1"/>
+<node id="12960247945" lat="41.4143690" lon="2.0113512" version="1"/>
+<node id="12960247946" lat="41.4120910" lon="2.0123844" version="1"/>
+<node id="12960247947" lat="41.4123065" lon="2.0121815" version="1"/>
+<way id="28135082" version="1"><nd ref="309013042"/><nd ref="5954527235"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="4"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="|||slight_right"/></way>
+<way id="35399156" version="1"><nd ref="446280610"/><nd ref="9711669013"/><nd ref="607473591"/><tag k="bicycle" v="yes"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="50"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="ref" v="BV-1468"/><tag k="surface" v="asphalt"/></way>
+<way id="43804107" version="1"><nd ref="555240533"/><nd ref="12922811833"/><nd ref="361196046"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="30"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="ref" v="BV-1468"/><tag k="surface" v="asphalt"/></way>
+<way id="47752321" version="1"><nd ref="607473585"/><nd ref="6073976266"/><nd ref="6073976267"/><nd ref="607473555"/><nd ref="607473552"/><nd ref="607473594"/><nd ref="5954527238"/><tag k="access" v="yes"/><tag k="bicycle" v="no"/><tag k="foot" v="no"/><tag k="highway" v="motorway_link"/><tag k="lanes" v="1"/><tag k="maxspeed" v="80"/><tag k="noname" v="yes"/><tag k="oneway" v="yes"/><tag k="surface" v="asphalt"/></way>
+<way id="47752340" version="1"><nd ref="607473591"/><nd ref="12922811832"/><nd ref="392907488"/><tag k="bicycle" v="yes"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="maxspeed" v="50"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="ref" v="BV-1468"/><tag k="surface" v="asphalt"/></way>
+<way id="47752342" version="1"><nd ref="392907488"/><nd ref="555240533"/><tag k="bicycle" v="yes"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="maxspeed" v="50"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="ref" v="BV-1468"/><tag k="surface" v="asphalt"/></way>
+<way id="50275184" version="1"><nd ref="4194641733"/><nd ref="4194641734"/><nd ref="12960247909"/><nd ref="418638106"/><nd ref="418638107"/><nd ref="555240526"/><tag k="cycleway:both" v="no"/><tag k="highway" v="residential"/><tag k="lanes" v="3"/><tag k="lanes:backward" v="2"/><tag k="lanes:forward" v="1"/><tag k="maxspeed" v="30"/><tag k="name" v="Carrer de Pere Calders"/><tag k="name:ca" v="Carrer de Pere Calders"/><tag k="name:etymology:wikidata" v="Q3049533"/><tag k="surface" v="asphalt"/></way>
+<way id="169785940" version="1"><nd ref="555240533"/><nd ref="5952708110"/><nd ref="5952708111"/><nd ref="1809463101"/><tag k="bicycle" v="yes"/><tag k="highway" v="tertiary_link"/><tag k="lanes" v="1"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="through;right"/></way>
+<way id="230443675" version="1"><nd ref="555240505"/><nd ref="12960247912"/><tag k="highway" v="primary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="50"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="surface" v="asphalt"/></way>
+<way id="296913512" version="1"><nd ref="583263327"/><nd ref="607473580"/><nd ref="583263523"/><nd ref="5969690637"/><nd ref="6050267546"/><nd ref="418638637"/><nd ref="6050267552"/><nd ref="6050267551"/><nd ref="5969690632"/><nd ref="6050267544"/><nd ref="6050267542"/><nd ref="6050267545"/><nd ref="5969690633"/><nd ref="583263812"/><nd ref="418638638"/><nd ref="5969690634"/><nd ref="418638639"/><nd ref="12960247910"/><nd ref="418638107"/><nd ref="5969690635"/><nd ref="5969690636"/><nd ref="12922811834"/><nd ref="5398532448"/><nd ref="5952708115"/><nd ref="5952708114"/><nd ref="5952708117"/><nd ref="5952708113"/><nd ref="5952708112"/><nd ref="361196046"/><tag k="cycleway:both" v="no"/><tag k="highway" v="residential"/><tag k="lit" v="yes"/><tag k="maxspeed" v="30"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Avinguda de Caldes"/><tag k="name:ca" v="Avinguda de Caldes"/><tag k="oneway" v="yes"/><tag k="surface" v="asphalt"/></way>
+<way id="361648185" version="1"><nd ref="395511103"/><nd ref="12922811836"/><nd ref="5398532444"/><nd ref="394824639"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="lanes" v="3"/><tag k="lanes:backward" v="1"/><tag k="lanes:forward" v="2"/><tag k="maxspeed" v="30"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="oneway" v="no"/><tag k="ref" v="BV-1468"/><tag k="sidewalk" v="both"/><tag k="surface" v="asphalt"/><tag k="turn:lanes:backward" v="through"/><tag k="turn:lanes:forward" v="left|through;right"/></way>
+<way id="414832354" version="1"><nd ref="1809463101"/><nd ref="6050267528"/><nd ref="1809463157"/><nd ref="6050267529"/><nd ref="5287415886"/><nd ref="444875364"/><tag k="highway" v="residential"/><tag k="lane_markings" v="no"/><tag k="lit" v="yes"/><tag k="name" v="Avinguda de Caldes"/><tag k="name:ca" v="Avinguda de Caldes"/><tag k="oneway" v="yes"/><tag k="parking:both" v="lane"/><tag k="parking:both:orientation" v="perpendicular"/><tag k="surface" v="asphalt"/></way>
+<way id="547228336" version="1"><nd ref="361196046"/><nd ref="12922811835"/><nd ref="12922811838"/><nd ref="5398532446"/><nd ref="394824639"/><tag k="cycleway:both" v="no"/><tag k="highway" v="secondary"/><tag k="lanes" v="3"/><tag k="lanes:forward" v="2"/><tag k="maxspeed" v="30"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="name:etymology:wikidata" v="Q379290"/><tag k="oneway" v="no"/><tag k="ref" v="BV-1468"/><tag k="surface" v="asphalt"/><tag k="turn:lanes:forward" v="through|right"/></way>
+<way id="547228455" version="1"><nd ref="555240526"/><nd ref="12960247913"/><tag k="highway" v="secondary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="70"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="left;through|through;right;slight_right"/></way>
+<way id="547228456" version="1"><nd ref="555240533"/><nd ref="1136390704"/><nd ref="1809463168"/><nd ref="1136387586"/><nd ref="555240483"/><nd ref="1136391037"/><nd ref="555240550"/><nd ref="1136388070"/><nd ref="12960247916"/><nd ref="1136388501"/><nd ref="1136390594"/><nd ref="12960247917"/><tag k="highway" v="secondary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="50"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="surface" v="asphalt"/></way>
+<way id="547679259" version="1"><nd ref="446280622"/><nd ref="309013393"/><nd ref="12261084759"/><nd ref="309013121"/><nd ref="309013133"/><nd ref="5954527232"/><nd ref="5954527233"/><nd ref="309013024"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="3"/><tag k="lit" v="yes"/><tag k="maxheight:signed" v="no"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/></way>
+<way id="570380996" version="1"><nd ref="12908666039"/><nd ref="309002550"/><nd ref="5954527231"/><nd ref="5954527230"/><nd ref="309002560"/><nd ref="309002566"/><nd ref="12261084760"/><nd ref="309002568"/><nd ref="446280623"/><nd ref="5954527238"/><tag k="access" v="yes"/><tag k="bicycle" v="no"/><tag k="foot" v="no"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="4"/><tag k="lit" v="yes"/><tag k="maxheight:signed" v="no"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/></way>
+<way id="630667610" version="1"><nd ref="5954527235"/><nd ref="12960247945"/><nd ref="446280622"/><tag k="bridge" v="yes"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="4"/><tag k="layer" v="1"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="|||slight_right"/></way>
+<way id="630667611" version="1"><nd ref="607473597"/><nd ref="12908666026"/><tag k="access" v="yes"/><tag k="bicycle" v="no"/><tag k="change:lanes" v="none|none|none|none|merge_to_left"/><tag k="foot" v="no"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="5"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/></way>
+<way id="630667613" version="1"><nd ref="5954527238"/><nd ref="607473597"/><tag k="access" v="yes"/><tag k="bicycle" v="no"/><tag k="bridge" v="yes"/><tag k="change:lanes" v="none|none|none|none|merge_to_left"/><tag k="foot" v="no"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="5"/><tag k="layer" v="1"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/></way>
+<way id="642767668" version="1"><nd ref="1809463101"/><nd ref="5952708109"/><nd ref="5952708107"/><nd ref="5952708106"/><nd ref="5952708105"/><nd ref="1809463138"/><tag k="bicycle" v="yes"/><tag k="highway" v="tertiary_link"/><tag k="lanes" v="1"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="through"/></way>
+<way id="675478157" version="1"><nd ref="428639550"/><nd ref="5287415885"/><nd ref="12922811837"/><nd ref="5287415887"/><nd ref="394824639"/><tag k="bicycle" v="yes"/><tag k="cycleway:left" v="track"/><tag k="cycleway:left:segregated" v="no"/><tag k="cycleway:right" v="no"/><tag k="highway" v="tertiary"/><tag k="lanes" v="3"/><tag k="lanes:backward" v="1"/><tag k="lanes:forward" v="2"/><tag k="lit" v="yes"/><tag k="maxspeed" v="30"/><tag k="maxspeed:type" v="ES:zone30"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="oneway" v="no"/><tag k="parking:left" v="lane"/><tag k="parking:left:orientation" v="perpendicular"/><tag k="parking:right" v="no"/><tag k="sidewalk" v="left"/><tag k="surface" v="asphalt"/></way>
+<way id="675478158" version="1"><nd ref="4194641733"/><nd ref="12922811839"/><nd ref="5398532445"/><nd ref="394824639"/><tag k="bicycle" v="yes"/><tag k="cycleway" v="no"/><tag k="highway" v="tertiary"/><tag k="lanes" v="2"/><tag k="lanes:backward" v="1"/><tag k="lanes:forward" v="1"/><tag k="lit" v="yes"/><tag k="maxspeed" v="30"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="oneway" v="no"/><tag k="sidewalk" v="right"/><tag k="sidewalk:left:bicycle" v="yes"/><tag k="surface" v="asphalt"/><tag k="turn:lanes:backward" v="through;right"/><tag k="turn:lanes:forward" v="through;right"/></way>
+<way id="879831073" version="1"><nd ref="12896954615"/><nd ref="12896954631"/><nd ref="12896954629"/><nd ref="12896954624"/><tag k="bicycle" v="yes"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270630" version="1"><nd ref="12896954606"/><nd ref="5287415887"/><nd ref="12896954601"/><tag k="crossing" v="traffic_signals"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1393270631" version="1"><nd ref="12896954638"/><nd ref="12896954639"/><nd ref="12896954642"/><nd ref="12896954644"/><nd ref="12896954643"/><nd ref="12896954641"/><nd ref="12896954640"/><nd ref="12896954602"/><nd ref="12896954604"/><nd ref="12896954655"/><nd ref="12896954654"/><nd ref="12896954652"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270632" version="1"><nd ref="12896954606"/><nd ref="12896954622"/><nd ref="12896954621"/><nd ref="12896954620"/><nd ref="12896954603"/><nd ref="12896954605"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Carrer de Jacint Verdaguer"/><tag k="name:ca" v="Carrer de Jacint Verdaguer"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270633" version="1"><nd ref="12896954603"/><nd ref="5398532446"/><nd ref="12896954602"/><tag k="crossing" v="traffic_signals"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1393270634" version="1"><nd ref="12896954607"/><nd ref="12896954606"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270635" version="1"><nd ref="12896954607"/><nd ref="5287415885"/><nd ref="12896954608"/><tag k="crossing" v="uncontrolled"/><tag k="crossing:markings" v="yes"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1393270636" version="1"><nd ref="12896909500"/><nd ref="12896954626"/><nd ref="12896954628"/><nd ref="12896954627"/><nd ref="12896954625"/><nd ref="12896954601"/><nd ref="12896954630"/><nd ref="12896954632"/><nd ref="12896954608"/><nd ref="12896954619"/><nd ref="12896954616"/><nd ref="12896954618"/><nd ref="12896954617"/><nd ref="12896954613"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270638" version="1"><nd ref="12896954613"/><nd ref="12896954615"/><nd ref="12896954614"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="name" v="Carrer de la Roseta Canalies"/><tag k="name:ca" v="Carrer de la Roseta Canalies"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270639" version="1"><nd ref="12896954610"/><nd ref="12896954609"/><nd ref="5287415882"/><nd ref="12896954612"/><nd ref="12896954613"/><tag k="crossing" v="uncontrolled"/><tag k="crossing:markings" v="yes"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/></way>
+<way id="1393270640" version="1"><nd ref="12896954630"/><nd ref="12896954629"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270641" version="1"><nd ref="12896954632"/><nd ref="12896954631"/><tag k="highway" v="footway"/><tag k="lit" v="yes"/><tag k="name" v="Passeig del Terraplè"/><tag k="name:ca" v="Passeig del Terraplè"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270645" version="1"><nd ref="12896954638"/><nd ref="5398532445"/><nd ref="12896954637"/><tag k="crossing" v="traffic_signals"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1393270648" version="1"><nd ref="12896954649"/><nd ref="5398532447"/><nd ref="12896954650"/><tag k="crossing" v="traffic_signals"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1393270649" version="1"><nd ref="12896954650"/><nd ref="12896954651"/><tag k="footway" v="traffic_island"/><tag k="highway" v="footway"/><tag k="name" v="Avinguda de Caldes"/><tag k="name:ca" v="Avinguda de Caldes"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270650" version="1"><nd ref="12896954653"/><nd ref="12896954652"/><tag k="footway" v="sidewalk"/><tag k="highway" v="footway"/><tag k="name" v="Avinguda de Caldes"/><tag k="name:ca" v="Avinguda de Caldes"/><tag k="surface" v="paving_stones"/></way>
+<way id="1393270651" version="1"><nd ref="12896954651"/><nd ref="5398532448"/><nd ref="12896954652"/><tag k="crossing" v="traffic_signals"/><tag k="footway" v="crossing"/><tag k="highway" v="footway"/><tag k="surface" v="asphalt"/></way>
+<way id="1394459051" version="1"><nd ref="12908666026"/><nd ref="309002591"/><tag k="access" v="yes"/><tag k="bicycle" v="no"/><tag k="foot" v="no"/><tag k="highway" v="motorway"/><tag k="int_ref" v="E 90"/><tag k="lanes" v="4"/><tag k="maxspeed" v="100"/><tag k="oneway" v="yes"/><tag k="ref" v="B-23"/><tag k="surface" v="asphalt"/></way>
+<way id="1395824354" version="1"><nd ref="12920061687"/><nd ref="12920061688"/><nd ref="5954525487"/><nd ref="446280613"/><nd ref="446280614"/><nd ref="1136387890"/><nd ref="12960247947"/><nd ref="1136389535"/><nd ref="12960247946"/><nd ref="446280615"/><nd ref="446280616"/><tag k="change:lanes" v="no|no"/><tag k="cycleway:right" v="no"/><tag k="highway" v="primary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="70"/><tag k="maxspeed:type" v="sign"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="smoothness" v="good"/><tag k="surface" v="asphalt"/></way>
+<way id="1410456370" version="1"><nd ref="12960247912"/><nd ref="12960247911"/><nd ref="555240526"/><tag k="change:lanes" v="no|no"/><tag k="highway" v="primary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="70"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="through|through;right"/></way>
+<way id="1410456371" version="1"><nd ref="12960247913"/><nd ref="12960247914"/><nd ref="12922811831"/><nd ref="5398532447"/><nd ref="555240533"/><tag k="change:lanes" v="no|no"/><tag k="highway" v="secondary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="70"/><tag k="maxspeed:type" v="sign"/><tag k="name" v="Carretera de Molins de Rei a Caldes"/><tag k="name:ca" v="Carretera de Molins de Rei a Caldes"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="surface" v="asphalt"/><tag k="turn:lanes" v="left;through|through;right;slight_right"/></way>
+<way id="1410456376" version="1"><nd ref="446280610"/><nd ref="5954525489"/><nd ref="446280611"/><nd ref="5954525488"/><nd ref="446280612"/><nd ref="12920061687"/><tag k="cycleway:right" v="no"/><tag k="highway" v="primary"/><tag k="lanes" v="2"/><tag k="maxspeed" v="70"/><tag k="maxspeed:type" v="sign"/><tag k="oneway" v="yes"/><tag k="ref" v="C-1413a"/><tag k="smoothness" v="excellent"/><tag k="surface" v="asphalt"/></way>
+<way id="1410456379" version="1"><nd ref="446280622"/><nd ref="1136388657"/><nd ref="1136390866"/><nd ref="1136389996"/><nd ref="1136389059"/><nd ref="1136388434"/><nd ref="1136390591"/><nd ref="1136389649"/><nd ref="1136391606"/><tag k="destination" v="Barcelona;Cinturón Litoral;ZAL;Fira"/><tag k="destination:int_ref" v="E-90"/><tag k="destination:ref" v="B-23;A-2"/><tag k="highway" v="motorway_link"/><tag k="lanes" v="1"/><tag k="maxspeed" v="80"/><tag k="noname" v="yes"/><tag k="oneway" v="yes"/><tag k="surface" v="asphalt"/></way>
+</osm>

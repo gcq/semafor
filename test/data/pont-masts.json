@@ -1,0 +1,50 @@
+{
+ "id": "ix_mu305j9t1beeb",
+ "name": "Pont",
+ "location": {
+  "lat": 41.414314,
+  "lon": 2.012107
+ },
+ "masts": [
+  {
+   "id": "mast_mu31jlyop2fy5",
+   "pos": {
+    "lat": 41.41427,
+    "lon": 2.011818
+   },
+   "headIds": [
+    "head_mu31jlyohoz5f"
+   ]
+  },
+  {
+   "id": "mast_mu31l4g51gjs5y",
+   "pos": {
+    "lat": 41.414322,
+    "lon": 2.012359
+   },
+   "headIds": [
+    "head_mu31jlyokwk53"
+   ]
+  },
+  {
+   "id": "mast_mu31l4kl1h9sy6",
+   "pos": {
+    "lat": 41.414161,
+    "lon": 2.012188
+   },
+   "headIds": [
+    "head_mu31jlyolckxe"
+   ]
+  },
+  {
+   "id": "mast_mu31l4sj1jw8ph",
+   "pos": {
+    "lat": 41.414181,
+    "lon": 2.012284
+   },
+   "headIds": [
+    "head_mu31jlyonzbgy"
+   ]
+  }
+ ]
+}
