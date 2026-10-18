@@ -4,7 +4,8 @@
 import * as store from '../store/db.js';
 import { nextOnset, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
 import { guardAspect, tapped } from '../predict/sequence.js';
-import { rankNext, bearingDeg, distanceM, headForApproach } from '../nav/proximity.js';
+import { deadReckon, offsetBetween, decayOffset, applyOffset, easeAngle } from '../nav/motion.js';
+import { rankNext, headForApproach, viewBearing, pickIntersection } from '../nav/proximity.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
@@ -82,6 +83,7 @@ const refreshStreets = () => streetFeed.check(state.intersections).catch((e) => 
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
+  syncLoop();
   safe('streets', () => {
     refreshStreets(); // after the first render; loads the cache, then queues what's stale
     window.addEventListener('online', () => streetFeed.online().catch(() => {}));
@@ -120,11 +122,13 @@ function startGps() {
   navigator.geolocation.watchPosition(
     (p) => {
       state.pos = { lat: p.coords.latitude, lon: p.coords.longitude };
+      state.fix = { ...state.pos, speed: Number.isFinite(p.coords.speed) ? p.coords.speed : 0, course: Number.isFinite(p.coords.heading) ? p.coords.heading : null, t: performance.now() };
+      state.fixNew = true;
       state.heading = Number.isFinite(p.coords.heading) ? p.coords.heading : null;
+      state.speed = Number.isFinite(p.coords.speed) ? p.coords.speed : 0;
       // Keep the last real heading: GPS course goes null at a standstill — exactly
       // when you tap — so the scene freezes to it instead of spinning.
       if (state.heading != null && state.speed >= 1.5) state.headingFrozen = state.heading;
-      state.speed = Number.isFinite(p.coords.speed) ? p.coords.speed : 0;
       $('gps-sub').textContent = ''; // only speak up when something's wrong
     },
     () => { $('gps-sub').textContent = 'GPS blocked — pick manually'; },
@@ -138,12 +142,13 @@ function currentIntersection() {
     const found = state.intersections.find((i) => i.id === state.selectedId);
     if (found) return found;
   }
-  return state.ranked[0]?.intersection ?? state.intersections[0] ?? null;
+  return pickIntersection({ ranked: state.ranked, intersections: state.intersections, pos: state.pos, lastId: state.lastRankedId, moving: state.heading != null && state.speed >= 1.5 });
 }
 
 function recomputeRanking() {
   if (state.pos) state.ranked = rankNext(state.pos, state.heading, state.speed, state.intersections);
   else state.ranked = state.intersections.map((ix) => ({ intersection: ix, distanceM: null, etaSec: null, offAxis: 0 }));
+  if (state.ranked[0]) state.lastRankedId = state.ranked[0].intersection.id; // what to keep showing once you've passed it
 }
 
 // ---------- render loop ----------
@@ -295,12 +300,9 @@ function tintFor(hid, now) {
   return { aspect, strength: TINT_STRENGTH[rel] };
 }
 
-// Direction you're approaching the junction from. The bearing from you to its
-// centre is right even when stopped (GPS course is null then), so prefer it until
-// you're basically in the box; fall back to the live/frozen course.
+// Live's "up" and the approach direction: your travel course (see viewBearing).
 function approachBearing(ix) {
-  if (state.pos && distanceM(state.pos, ix.location) > 8) return bearingDeg(state.pos, ix.location);
-  return state.heading ?? state.headingFrozen;
+  return viewBearing({ heading: state.heading, headingFrozen: state.headingFrozen, speed: state.speed, pos: state.pos, target: ix.location });
 }
 
 // Head to predict + capture: a pole you tapped, else the head facing your
@@ -315,6 +317,44 @@ function resolveActiveHead(ix, heads) {
   return heads[0];
 }
 
+// ---------- live canvas: rAF loop, dead reckoning, eased orientation ----------
+const FRAME_MS = 28; // ~30 fps cap (every 2nd frame at 60 Hz)
+let rafId = 0, lastDraw = 0, lastFrameT = 0, shown = null; // shown: { ixId, pos, off, up }
+window.__onda = { lastScene: { ixId: null, upDeg: null, scale: null, ego: null }, frames: [] }; // read-only debug hook (tools/e2e-drive.mjs)
+
+function drawFrame(ts, force) {
+  const sc = state.liveScene, canvas = $('live-scene');
+  if (!sc || !canvas || !canvas.clientWidth) return;
+  if (!force && ts - lastDraw < FRAME_MS) return;
+  const t0 = performance.now();
+  const dt = lastFrameT ? Math.min(0.5, (ts - lastFrameT) / 1000) : 0;
+  lastFrameT = ts; lastDraw = ts;
+  const upTarget = approachBearing(sc.ix) ?? 0;
+  const target = deadReckon(state.fix, ts) ?? state.pos;
+  if (!shown || shown.ixId !== sc.ix.id) shown = { ixId: sc.ix.id, pos: target, off: { dlat: 0, dlon: 0 }, up: upTarget }; // snap
+  else {
+    shown.up = easeAngle(shown.up, upTarget, dt);
+    if (target && state.fixNew && shown.pos) shown.off = offsetBetween(shown.pos, target); // new fix: blend from where we were drawn
+    state.fixNew = false;
+    shown.off = decayOffset(shown.off, dt);
+    shown.pos = target && applyOffset(target, shown.off);
+  }
+  window.__onda.lastScene.ixId = sc.ix.id; window.__onda.lastScene.upDeg = shown.up;
+  state.sceneBoxes = drawScene(canvas, { intersection: sc.ix, ego: shown.pos, upDeg: shown.up, aspectOf: sc.aspectOf, activeHeadId: sc.activeHeadId, streets: streetFeed.get(sc.ix.id), streetStatus: streetStatusOf(sc.ix.id), neighbors: sc.neighbors, tintOf: sc.tintOf });
+  const fr = window.__onda.frames;
+  fr.push({ ms: performance.now() - t0, t: ts, ixId: sc.ix.id, up: shown.up, ego: window.__onda.lastScene.ego });
+  if (fr.length > 1200) fr.shift();
+}
+
+function frameLoop(ts) { rafId = requestAnimationFrame(frameLoop); drawFrame(ts); }
+// Run only while Live is showing and the page is visible.
+function syncLoop() {
+  const want = $('view-live')?.classList.contains('active') && !document.hidden;
+  if (want && !rafId) { lastFrameT = 0; rafId = requestAnimationFrame(frameLoop); }
+  else if (!want && rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+}
+document.addEventListener('visibilitychange', syncLoop);
+
 function renderLive(ix) {
   ix = ix ?? currentIntersection();
   if (!ix) { $('ix-name').textContent = 'No intersections'; $('active-head').hidden = true; return; }
@@ -325,19 +365,17 @@ function renderLive(ix) {
   const active = resolveActiveHead(ix, heads);
 
   // scene: a light is coloured only when the model knows enough to say (>= 2 colours tapped)
-  const aspectOf = (hid) => aspectNow(hid, now) ?? 'off';
-  const ego = state.pos;
-  const upDeg = approachBearing(ix) ?? 0;
-  const canvas = $('live-scene');
-  if (canvas && canvas.clientWidth) {
-    // other junctions of this cluster: lights only (their streets are in the shared entry)
-    const neighbors = streetFeed.neighborIds(ix.id)
-      .map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)
-      .map((n) => ({ ix: n, aspectOf: (hid) => aspectNow(hid, now) ?? 'off' }));
-    const tints = new Map(); // one evaluation per head per frame (several approaches can share a head)
-    const tintOf = (_ixId, hid) => { if (!tints.has(hid)) tints.set(hid, tintFor(hid, now)); return tints.get(hid); };
-    state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null, streets: streetFeed.get(ix.id), streetStatus: streetStatusOf(ix.id), neighbors, tintOf });
-  }
+  // The canvas itself is drawn by the rAF loop (drawFrame); this hands it what to draw, refreshed on the tick.
+  // aspects/tints are memoised per tick so a frame costs no predictions.
+  const aspects = new Map(), tints = new Map(); // several approaches can share a head
+  const aspectOfC = (hid) => { if (!aspects.has(hid)) aspects.set(hid, aspectNow(hid, now) ?? 'off'); return aspects.get(hid); };
+  const tintOf = (_ixId, hid) => { if (!tints.has(hid)) tints.set(hid, tintFor(hid, now)); return tints.get(hid); };
+  // other junctions of this cluster: lights only (their streets are in the shared entry)
+  const neighbors = streetFeed.neighborIds(ix.id)
+    .map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)
+    .map((n) => ({ ix: n, aspectOf: aspectOfC }));
+  state.liveScene = { ix, aspectOf: aspectOfC, activeHeadId: active?.id ?? null, neighbors, tintOf };
+  if (!rafId) drawFrame(performance.now(), true); // no loop running (e.g. rAF throttled): still draw on the tick
 
   renderCountdown(active, now);
   renderLiveMeta(active, now);
@@ -639,6 +677,7 @@ function showView(name) {
     $(`view-${v}`).classList.toggle('active', name === v);
     $(`tab-${v}`).setAttribute('aria-selected', String(name === v));
   }
+  syncLoop();
   if (name === 'edit') refreshEditor();
   if (name === 'analyze') refreshAnalyze();
 }

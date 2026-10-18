@@ -100,3 +100,36 @@ export function headForApproach(ix, approachBearing, tolDeg = 60) {
   }
   return best && bestD <= tolDeg ? best.headIds[0] : null;
 }
+
+/**
+ * Which way is "up" in Live: your direction of travel. Live course while moving,
+ * else the last good course (GPS course goes null at a standstill), and only if
+ * no course was ever known the bearing from you to `target` (the junction centre).
+ * @param {{heading:number|null, headingFrozen:number|null, speed:number, pos?:GeoPoint|null, target?:GeoPoint|null, minSpeed?:number}} o
+ * @returns {number|null}
+ */
+export function viewBearing({ heading, headingFrozen, speed, pos, target, minSpeed = 1.5 }) {
+  if (heading != null && speed >= minSpeed) return heading;
+  if (headingFrozen != null) return headingFrozen;
+  return pos && target ? bearingDeg(pos, target) : null;
+}
+
+/**
+ * The junction Live shows when not manually selected: the best-ranked one ahead.
+ * When moving with nothing in the cone (you just passed the last one), keep the
+ * previous one while it is within `keepM`, else the nearest junction.
+ * @param {{ranked:Array<{intersection:Intersection}>, intersections:Intersection[], pos:GeoPoint|null, lastId:string|null, moving:boolean, keepM?:number}} o
+ * @returns {Intersection|null}
+ */
+export function pickIntersection({ ranked, intersections, pos, lastId, moving, keepM = 300 }) {
+  if (ranked[0]) return ranked[0].intersection;
+  if (!pos) return intersections[0] ?? null;
+  const last = moving && lastId ? intersections.find((i) => i.id === lastId) : null;
+  if (last && distanceM(pos, last.location) <= keepM) return last;
+  let best = null, bestD = Infinity;
+  for (const ix of intersections) {
+    const d = distanceM(pos, ix.location);
+    if (d < bestD) { bestD = d; best = ix; }
+  }
+  return best;
+}

@@ -48,3 +48,12 @@ test('lateral offset constrains too, and zero distance is safe', () => {
   assert.ok(Math.abs(target - (200 - 24) / 300) < 1e-9);
   assert.equal(sceneScale({ ...base, egoF: 0, egoL: 0 }).target, 2);
 });
+
+test('ego far ahead: floor is on the top side, pinned only beyond MAX_FOLLOW_M', () => {
+  const roomAbove = base.jy - 70;
+  const near = sceneScale({ ...base, egoF: 150, egoL: 0 });
+  assert.equal(near.pinned, false);
+  const far = sceneScale({ ...base, egoF: 1000, egoL: 0 });
+  assert.equal(far.pinned, true);
+  assert.ok(Math.abs(far.target - roomAbove / 200) < 1e-9);
+});

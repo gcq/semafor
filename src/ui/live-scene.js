@@ -64,7 +64,7 @@ const EASE_TAU_S = 0.8;
  * Pure zoom math (px per metre). `fitScale` is the closest zoom allowed; zoom out
  * from it only as far as needed to keep ego (egoF forward / egoL lateral metres
  * from the junction, travel frame) inside the margins, never below the scale at
- * which ego MAX_FOLLOW_M straight behind would just fit.
+ * which ego MAX_FOLLOW_M straight behind (or ahead) would just fit.
  * @returns {{target:number, pinned:boolean}} pinned: ego doesn't fit even at the floor
  */
 export function sceneScale({ W, H, jy, fitScale, egoF, egoL, tall }) {
@@ -74,7 +74,7 @@ export function sceneScale({ W, H, jy, fitScale, egoF, egoL, tall }) {
   const roomSide = W / 2 - EGO_MARGIN_SIDE;
   const vert = egoF < 0 ? roomBelow / Math.max(1, -egoF) : roomAbove / Math.max(1, egoF);
   const egoScale = Math.min(vert, roomSide / Math.max(1, Math.abs(egoL)));
-  const minScale = Math.min(fitScale, roomBelow / MAX_FOLLOW_M);
+  const minScale = Math.min(fitScale, (egoF < 0 ? roomBelow : roomAbove) / MAX_FOLLOW_M); // floor on ego's side
   return {
     target: Math.max(minScale, Math.min(fitScale, egoScale)),
     pinned: egoScale < minScale - 1e-9,
@@ -315,23 +315,27 @@ export function drawScene(canvas, scene) {
   const egoP = ego && typeof ego.lat === 'number' ? fl(toEN(ego, c)) : null;
   const { target, pinned } = sceneScale({ W, H, jy, fitScale, egoF: egoP?.f, egoL: egoP?.l, tall });
   const scale = easeScale(canvas, ix.id, target);
+  if (window.__onda?.lastScene) window.__onda.lastScene.scale = scale;
   const screen = (p) => ({ x: jx + p.l * scale, y: jy - p.f * scale });
 
-  // Ego: true position if it's on screen, otherwise pinned to the bottom edge
-  // along the approach, labelled with the distance (only when even the widest
-  // zoom can't hold it, not while the zoom is still easing out).
+  // Ego: true position if it's on screen, otherwise pinned to the bottom (behind
+  // the junction) or top (past it) edge along the approach, labelled with the
+  // distance (only when even the widest zoom can't hold it, not while the zoom is
+  // still easing out).
   let egoPt = null, egoLabel = '';
   if (egoP) {
     const s = screen(egoP);
     const distM = Math.hypot(egoP.f, egoP.l);
-    const bottom = H - 22;
-    if (s.y > bottom || s.x < 12 || s.x > W - 12) {
+    const bottom = H - 22, top = tall ? 100 : 62;
+    if (s.y > bottom || s.y < top || s.x < 12 || s.x > W - 12) {
       // walk from the junction toward ego until we hit the frame
-      const k = Math.min(Math.abs((bottom - jy) / Math.max(1e-6, s.y - jy)), Math.abs((W / 2 - 14) / Math.max(1e-6, Math.abs(s.x - jx))));
+      const edge = s.y < jy ? jy - top : bottom - jy;
+      const k = Math.min(Math.abs(edge / Math.max(1e-6, Math.abs(s.y - jy))), Math.abs((W / 2 - 14) / Math.max(1e-6, Math.abs(s.x - jx))));
       egoPt = { x: jx + (s.x - jx) * k, y: jy + (s.y - jy) * k };
       if (pinned) egoLabel = distM >= 1000 ? `${(distM / 1000).toFixed(1)} km` : `${Math.round(distM / 10) * 10} m`;
     } else egoPt = s;
   }
+  if (window.__onda?.lastScene) window.__onda.lastScene.ego = egoPt && { x: egoPt.x, y: egoPt.y };
 
   // scene.streets: a cache entry { kind, center, data } (src/osm/lanes-cache.js); its
   // centre is the cluster area's, not the pin's, so it is offset against this junction.
