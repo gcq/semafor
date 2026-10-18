@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initSync, JsStreetNetwork } from '../vendor/osm2streets/osm2streets_js.js';
 import {
-  overpassXmlQuery, clipGeojson, areaBbox, bboxCenter, compactLanes, buildLanes, centroid, fetchOsmXml, ARROW_NEAR_STOP_M,
+  overpassXmlQuery, clipGeojson, areaBbox, bboxCenter, compactLanes, buildLanes, centroid, fetchOsmXml, fetchOsmApiXml, fetchOverpassXml, OSM_API_MAP_URL, ARROW_NEAR_STOP_M,
 } from '../src/osm/lanes.js';
 
 const PONT = { lat: 41.4143, lon: 2.0121 };
@@ -103,7 +103,7 @@ test('compactLanes drops closing points / collapsed rings and unwanted marking t
   assert.equal(out.layers[0].mid.length, 0); // collapsed to nothing
 });
 
-test('fetchOsmXml validates the response and falls through endpoints', async () => {
+test('fetchOverpassXml validates the response and falls through endpoints', async () => {
   const xml = (s) => ({ status: 200, arrayBuffer: async () => new TextEncoder().encode(s).buffer });
   const calls = [];
   const fake = async (url, opts) => {
@@ -113,7 +113,59 @@ test('fetchOsmXml validates the response and falls through endpoints', async () 
     if (calls.length === 2) return xml('<?xml version="1.0"?><osm><node id="1"/><remark>runtime error: Query timed out</remark></osm>');
     return xml('<?xml version="1.0"?><osm version="0.6"><node id="1" lat="1" lon="1"/></osm>');
   };
-  const bytes = await fetchOsmXml(BBOX, { fetch: fake, endpoints: ['https://a.test/x', 'https://b.test/x', 'https://c.test/x'] });
+  const bytes = await fetchOverpassXml(BBOX, { fetch: fake, endpoints: ['https://a.test/x', 'https://b.test/x', 'https://c.test/x'] });
   assert.equal(calls.length, 3);
   assert.ok(bytes instanceof Uint8Array && bytes.length > 20);
+});
+
+// ---- source order: OSM API first, Overpass second ----
+const okXml = '<?xml version="1.0"?><osm version="0.6"><node id="1" lat="1" lon="1"/></osm>';
+const reply = (status, s = okXml) => ({ status, arrayBuffer: async () => new TextEncoder().encode(s).buffer });
+const EP = ['https://a.test/x'];
+
+test('fetchOsmXml: the OSM API map call (GET, lon/lat order) is tried first and alone when it works', async () => {
+  const calls = [];
+  const bytes = await fetchOsmXml(BBOX, { fetch: async (url, o) => { calls.push([url, o]); return reply(200); }, overpass: { endpoints: EP } });
+  assert.equal(calls.length, 1);
+  const [url, o] = calls[0];
+  assert.ok(url.startsWith(`${OSM_API_MAP_URL}?bbox=`));
+  const [w, s, e, n] = url.split('bbox=')[1].split(',').map(Number);
+  assert.ok(Math.abs(s - BBOX[0]) < 1e-6 && Math.abs(w - BBOX[1]) < 1e-6 && Math.abs(n - BBOX[2]) < 1e-6 && Math.abs(e - BBOX[3]) < 1e-6);
+  assert.equal(o.method, undefined); // plain GET
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 20);
+});
+
+for (const [name, apiReply] of [
+  ['HTTP 400 (too many nodes)', async () => reply(400, 'You requested too many nodes')],
+  ['HTTP 500', async () => reply(500, 'oops')],
+  ['a non-OSM 200 body', async () => reply(200, '<html>maintenance</html>')],
+  ['a network error', async () => { throw new TypeError('Load failed'); }],
+  ['a timeout', (o) => new Promise((_, rej) => o.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))))],
+]) {
+  test(`fetchOsmXml: falls back to Overpass after the OSM API gives ${name}`, async () => {
+    const calls = [];
+    const fake = async (url, o) => { calls.push(url); return url.startsWith(OSM_API_MAP_URL) ? apiReply(o) : reply(200); };
+    const bytes = await fetchOsmXml(BBOX, { fetch: fake, osmApi: { timeoutMs: 20 }, overpass: { endpoints: EP } });
+    assert.deepEqual(calls, [calls[0], EP[0]]);
+    assert.ok(calls[0].startsWith(OSM_API_MAP_URL));
+    assert.ok(bytes.length > 20);
+  });
+}
+
+test('fetchOsmXml: everything failing throws one error that names every source', async () => {
+  const fake = async (url) => (url.startsWith(OSM_API_MAP_URL) ? reply(500) : reply(504));
+  await assert.rejects(fetchOsmXml(BBOX, { fetch: fake, overpass: { endpoints: EP } }), (e) => /OSM API: HTTP 500/.test(e.message) && /a\.test: HTTP 504/.test(e.message));
+});
+
+test('fetchOsmApiXml: an oversize bbox is refused without a request', async () => {
+  let called = false;
+  await assert.rejects(fetchOsmApiXml([41, 2, 42, 3], { fetch: async () => { called = true; return reply(200); } }), /too large/);
+  assert.equal(called, false);
+});
+
+test('fetchOverpass: overpass-api.de gets a long client timeout, mirrors the short one', async () => {
+  const { OVERPASS_TIMEOUTS_MS, OVERPASS_DEFAULT_TIMEOUT_MS, OVERPASS_ENDPOINTS } = await import('../src/osm/streets.js');
+  assert.ok(OVERPASS_TIMEOUTS_MS['overpass-api.de'] >= 90000);
+  assert.equal(new URL(OVERPASS_ENDPOINTS[0]).hostname, 'overpass-api.de');
+  assert.ok(OVERPASS_DEFAULT_TIMEOUT_MS <= 30000);
 });

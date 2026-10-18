@@ -45,12 +45,17 @@ const state = {
 };
 
 // Street geometry for the Live scene: derived, cached on-device, built in the
-// background (osm2streets lanes, plain lines as fallback). Never blocks boot or
-// render; with nothing cached yet Live just draws without streets.
+// background (OSM API -> osm2streets lanes, plain lines as fallback; retried while
+// the app is open). Never blocks boot or render; with nothing cached yet Live
+// draws without streets and shows a small status note.
 const streetFeed = createStreetFeed({
   loadAll: store.allStreets, save: store.putStreets, remove: store.deleteStreets,
   fetchXml: fetchOsmXml, computeLanes, fetchPlain: fetchStreets,
 });
+const streetStatusOf = (ixId) => {
+  const st = streetFeed.status(ixId);
+  return st === 'ready' || st === null ? null : navigator.onLine === false ? 'offline' : st;
+};
 const refreshStreets = () => streetFeed.check(state.intersections).catch((e) => console.log('[streets]', e?.message ?? e));
 
 // ---------- boot ----------
@@ -331,7 +336,7 @@ function renderLive(ix) {
       .map((n) => ({ ix: n, aspectOf: (hid) => aspectNow(hid, now) ?? 'off' }));
     const tints = new Map(); // one evaluation per head per frame (several approaches can share a head)
     const tintOf = (_ixId, hid) => { if (!tints.has(hid)) tints.set(hid, tintFor(hid, now)); return tints.get(hid); };
-    state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null, streets: streetFeed.get(ix.id), neighbors, tintOf });
+    state.sceneBoxes = drawScene(canvas, { intersection: ix, ego, upDeg, aspectOf, activeHeadId: active?.id ?? null, streets: streetFeed.get(ix.id), streetStatus: streetStatusOf(ix.id), neighbors, tintOf });
   }
 
   renderCountdown(active, now);

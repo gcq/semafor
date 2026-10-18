@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { streetsStale, createStreetFeed, clusterIntersections, STREETS_FORMAT, MAX_AGE_MS, MOVED_M, CLUSTER_LINK_M, CLUSTER_MAX_SPAN_M } from '../src/osm/lanes-cache.js';
+import { streetsStale, createStreetFeed, clusterIntersections, STREETS_FORMAT, RETRY_MS, retryDelay, MAX_AGE_MS, MOVED_M, CLUSTER_LINK_M, CLUSTER_MAX_SPAN_M } from '../src/osm/lanes-cache.js';
 
 const NOW = 1_800_000_000_000;
 const loc = { lat: 41.4143, lon: 2.0121 };
@@ -58,7 +58,7 @@ test('streetsStale: missing, wrong format, members changed, moved, old', () => {
 
 // A feed with scripted deps; sleeps are recorded, not waited.
 function harness(over = {}) {
-  const h = { stored: [], saved: [], removed: [], sleeps: [], calls: [], logs: [] };
+  const h = { stored: [], saved: [], removed: [], sleeps: [], calls: [], logs: [], timers: [], cleared: [] };
   h.deps = {
     loadAll: async () => h.stored,
     save: async (e) => { h.saved.push(e); },
@@ -66,6 +66,7 @@ function harness(over = {}) {
     fetchXml: async (c) => { h.calls.push('xml'); return new Uint8Array([1]); },
     computeLanes: async () => { h.calls.push('lanes'); return { layers: [{ z: 0 }] }; },
     fetchPlain: async () => { h.calls.push('plain'); return { ways: [{}] }; },
+    setTimer: (fn, ms) => { const t = { fn, ms }; h.timers.push(t); return t; }, clearTimer: (t) => { h.cleared.push(t); t.dead = true; },
     now: () => NOW, sleep: async (ms) => { h.sleeps.push(ms); }, log: (...a) => h.logs.push(a.join(' ')),
     ...over,
   };
@@ -140,22 +141,98 @@ test('feed: empty lanes also fall back', async () => {
   assert.equal(h.feed.get('ix1').kind, 'plain');
 });
 
-test('feed: Overpass failures back off exponentially, then give up quietly for the session', async () => {
+test('retryDelay: 10 s, 30 s, 2 min, then every 5 min', () => {
+  assert.deepEqual(RETRY_MS, [10000, 30000, 120000, 300000]);
+  assert.deepEqual([1, 2, 3, 4, 5, 50].map(retryDelay), [10000, 30000, 120000, 300000, 300000, 300000]);
+  assert.equal(retryDelay(0), 10000);
+});
+
+test('feed: a failed cluster is retried in the background on the backoff schedule, never given up', async () => {
   let n = 0;
-  const h = harness({ fetchXml: async () => { n++; throw new Error('HTTP 429'); } });
+  const h = harness({ fetchXml: async () => { n++; throw new Error('HTTP 500'); } });
   await h.feed.check([ix]);
+  assert.equal(h.feed.status('ix1'), 'loading');
   await settle();
-  assert.equal(n, 3);
-  assert.deepEqual(h.sleeps, [4000, 8000]);
+  assert.equal(n, 1);
+  assert.equal(h.feed.status('ix1'), 'failed');
   assert.equal(h.feed.get('ix1'), null);
-  assert.equal(h.saved.length, 0);
-  await h.feed.check([ix]); // same junction, same place: not retried this session
+  assert.deepEqual(h.timers.map((t) => t.ms), [10000]);
+  await h.feed.check([ix]); // checking again while waiting does not hammer the network
   await settle();
-  assert.equal(n, 3);
-  // ...until we come back online
-  await h.feed.online();
-  await settle();
+  assert.equal(n, 1);
+  for (const want of [30000, 120000, 300000, 300000, 300000]) {
+    h.timers.at(-1).fn(); // the retry timer fires
+    await settle();
+    assert.equal(h.feed.status('ix1'), 'failed');
+    assert.equal(h.timers.at(-1).ms, want);
+  }
   assert.equal(n, 6);
+  assert.equal(h.saved.length, 0);
+});
+
+test('feed: a retry that succeeds clears the failure state and the next failure starts the schedule over', async () => {
+  let fail = true;
+  const h = harness({ fetchXml: async () => { if (fail) throw new Error('timeout'); return new Uint8Array([1]); } });
+  await h.feed.check([ix]); await settle();
+  h.timers.at(-1).fn(); await settle();
+  assert.deepEqual(h.timers.map((t) => t.ms), [10000, 30000]);
+  fail = false;
+  h.timers.at(-1).fn(); await settle();
+  assert.equal(h.feed.status('ix1'), 'ready');
+  assert.equal(h.feed.get('ix1').kind, 'lanes');
+  assert.equal(h.saved.length, 1);
+  assert.equal(h.timers.length, 2); // nothing further scheduled
+});
+
+test('feed: online() cancels the waits and retries immediately', async () => {
+  let n = 0;
+  const h = harness({ fetchXml: async () => { n++; if (n === 1) throw new Error('offline'); return new Uint8Array([1]); } });
+  await h.feed.check([ix]); await settle();
+  assert.equal(h.feed.status('ix1'), 'failed');
+  const t = h.timers[0];
+  await h.feed.online(); await settle();
+  assert.ok(t.dead && h.cleared.includes(t));
+  assert.equal(n, 2);
+  assert.equal(h.feed.status('ix1'), 'ready');
+});
+
+test('feed: never two requests in flight, however many clusters fail and retry', async () => {
+  let inflight = 0, max = 0;
+  const h = harness({ fetchXml: async () => { inflight++; max = Math.max(max, inflight); await new Promise((r) => setTimeout(r, 3)); inflight--; throw new Error('x'); } });
+  await h.feed.check([ix, at('b', 2500), at('c', 5000)]); await settle(); await settle();
+  assert.equal(h.timers.length, 3);
+  for (const t of [...h.timers]) t.fn(); // all three retry timers fire together
+  await settle(); await settle(); await settle();
+  assert.equal(max, 1);
+});
+
+test('feed.status: loading while queued/building, ready once cached, null for unknown or when idle with nothing to do', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const h = harness({ fetchXml: async () => { await gate; return new Uint8Array([1]); } });
+  assert.equal(h.feed.status('ix1'), null); // before the first check
+  await h.feed.check([ix, at('b', 2500)]);
+  assert.equal(h.feed.status('ix1'), 'loading');
+  assert.equal(h.feed.status('b'), 'loading'); // queued behind it
+  assert.equal(h.feed.status('nobody'), null);
+  release(); await settle();
+  assert.equal(h.feed.status('ix1'), 'ready');
+  assert.equal(h.feed.status('b'), 'ready');
+});
+
+test('feed.status: a cached entry stays ready even when its refresh fails', async () => {
+  const h = harness({ fetchXml: async () => { throw new Error('x'); } });
+  h.stored = [entry({ computedAt: NOW - MAX_AGE_MS - 1 })];
+  await h.feed.check([ix]); await settle();
+  assert.equal(h.feed.status('ix1'), 'ready');
+  assert.equal(h.timers.length, 1); // still retried
+});
+
+test('feed: a cluster that disappears cancels its retry', async () => {
+  const h = harness({ fetchXml: async () => { throw new Error('x'); } });
+  await h.feed.check([ix]); await settle();
+  await h.feed.check([at('other', 4000)]); await settle();
+  assert.ok(h.timers[0].dead);
 });
 
 test('feed: a cluster that is already queued is not queued twice; a moved member is rebuilt', async () => {

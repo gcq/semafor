@@ -1,5 +1,6 @@
 // Plain-line OSM street geometry for the Live tab: the FALLBACK when osm2streets
-// (src/osm/lanes.js) can't build lane polygons for a junction. Fetched in the
+// (src/osm/lanes.js) can't build lane polygons for a junction, plus the shared
+// Overpass POST used as the FALLBACK source of the OSM XML. Fetched in the
 // background by the street cache (src/osm/lanes-cache.js), never while driving,
 // compacted to local metres and kept on-device as derived data.
 // Pure + DOM-free: fetch is injectable so tests never touch the network.
@@ -12,6 +13,11 @@ export const OVERPASS_ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
+
+// Requests queue on overpass-api.de when it is busy (the query's own [timeout:25]
+// only starts once it runs), so it gets a long client timeout; mirrors are last resort.
+export const OVERPASS_TIMEOUTS_MS = { 'overpass-api.de': 90000 };
+export const OVERPASS_DEFAULT_TIMEOUT_MS = 30000;
 
 /** Overpass QL: every highway way (with geometry) + signal nodes around `center`, or inside `bbox` [s,w,n,e] when given. */
 export function overpassQuery(center, radiusM = 150, bbox = null) {
@@ -63,12 +69,12 @@ export function parseOverpass(json, center, fetchedAt = Date.now(), radiusM = 15
  * works; throws a readable Error if all fail. Shared by the plain-line and the
  * osm2streets (XML) fetches.
  */
-export async function fetchOverpass(query, read, { fetch = globalThis.fetch, endpoints = OVERPASS_ENDPOINTS, timeoutMs = 30000 } = {}) {
+export async function fetchOverpass(query, read, { fetch = globalThis.fetch, endpoints = OVERPASS_ENDPOINTS, timeoutMs = null } = {}) {
   const body = new URLSearchParams({ data: query });
   const fails = [];
   for (const url of endpoints) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const timer = setTimeout(() => ctl.abort(), timeoutMs ?? OVERPASS_TIMEOUTS_MS[new URL(url).hostname] ?? OVERPASS_DEFAULT_TIMEOUT_MS);
     try {
       const res = await fetch(url, { method: 'POST', body, signal: ctl.signal });
       if (res.status !== 200) throw new Error(`HTTP ${res.status}`);

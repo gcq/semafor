@@ -32,6 +32,7 @@ import { matchApproaches } from '../osm/approaches.js';
 
 const R = 6371000;
 const RAD = Math.PI / 180;
+const STREET_NOTE = { loading: 'Loading streets…', failed: 'Streets unavailable — retrying', offline: 'No streets offline yet' };
 const ZOOM = 0.75; // <1 zooms out from the fit-to-masts view so more of the surrounding streets show
 
 // Beyond this distance behind the junction it shrinks to a speck (at 400 m it
@@ -275,6 +276,7 @@ function roundRect(ctx, x, y, w, h, r) {
  * @param {(headId:string)=>string} scene.aspectOf   current aspect per head
  * @param {string|null} scene.activeHeadId
  * @param {{kind:'lanes'|'plain', center:{lat:number,lon:number}, data:Object}|null} [scene.streets]  cached street geometry (src/osm/lanes-cache.js)
+ * @param {'loading'|'failed'|'offline'|null} [scene.streetStatus]  why there are no streets yet (a muted note, bottom-left)
  * @param {Array<{ix:Object, aspectOf:(headId:string)=>string}>} [scene.neighbors]  other intersections of the same cluster: a colour per head, drawn as display-only dots
  * @param {(ixId:string, headId:string)=>({aspect:string, strength:number}|null)} [scene.tintOf]  colour + alpha to wash that head's approach with (lanes only); null = no tint
  * @returns {Array<{headId:string,x0:number,y0:number,x1:number,y1:number}>} hit boxes
@@ -470,6 +472,9 @@ export function drawScene(canvas, scene) {
   if (hasStreets) { // ODbL attribution, always shown with OSM data
     ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'right';
     ctx.fillText('© OpenStreetMap contributors', W - 6, H - 6);
+  } else if (STREET_NOTE[scene.streetStatus]) {
+    ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(STREET_NOTE[scene.streetStatus], 6, H - 6);
   }
   return boxes;
 }

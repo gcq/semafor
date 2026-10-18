@@ -1,6 +1,6 @@
 // Lane-level street geometry for the Live tab, built by osm2streets (vendored
 // wasm, see vendor/osm2streets/README.md). This file is the pure, DOM-free half:
-// the Overpass XML query + fetch, the clip polygon, running a street network
+// the OSM XML fetch (main OSM API map call, Overpass as fallback), the clip polygon, running a street network
 // and squeezing its four GeoJSON outputs into the compact local-metre structure
 // the renderer draws. The wasm itself is loaded by lanes-worker.js (browser) or
 // by the tests (initSync), so nothing here touches it directly.
@@ -52,17 +52,57 @@ export function clipGeojson([south, west, north, east]) {
   });
 }
 
-/** Fetch the OSM XML for an area as bytes (osm2streets wants a Uint8Array). */
-export function fetchOsmXml(bbox, opts = {}) {
+// The main OSM API serves any bbox up to this area (deg²) and answers HTTP 400 beyond
+// it, or when it holds more than 50,000 nodes. Cluster bboxes are ~1.5 km, far below.
+export const OSM_API_MAP_URL = 'https://api.openstreetmap.org/api/0.6/map';
+export const OSM_API_MAX_AREA_DEG2 = 0.25;
+export const OSM_API_TIMEOUT_MS = 30000;
+
+const looksLikeOsm = (bytes) => /<osm[\s>]/.test(new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 4096))));
+
+/**
+ * PRIMARY source: the OSM API `map` call over the bbox. Full OSM XML (buildings etc. too,
+ * which osm2streets ignores), fast, CORS-enabled and not subject to Overpass's queueing.
+ * Throws on a too-large bbox, any non-200 (400 = too many nodes), junk, or timeout.
+ */
+export async function fetchOsmApiXml([south, west, north, east], { fetch = globalThis.fetch, timeoutMs = OSM_API_TIMEOUT_MS } = {}) {
+  if ((north - south) * (east - west) > OSM_API_MAX_AREA_DEG2) throw new Error('OSM API: bbox too large');
+  const url = `${OSM_API_MAP_URL}?bbox=${[west, south, east, north].map((v) => v.toFixed(6)).join(',')}`;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (!looksLikeOsm(bytes)) throw new Error('unexpected response');
+    return bytes;
+  } catch (e) {
+    throw new Error(`OSM API: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
+  } finally { clearTimeout(timer); }
+}
+
+/** FALLBACK source: OSM XML (highway ways + nodes only) from Overpass, as bytes. */
+export function fetchOverpassXml(bbox, opts = {}) {
   return fetchOverpass(overpassXmlQuery(bbox), async (res) => {
     const bytes = new Uint8Array(await res.arrayBuffer());
     // Overpass reports runtime errors / timeouts inside a 200 response
-    const text = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 4096)));
-    if (!/<osm[\s>]/.test(text)) throw new Error('unexpected response');
+    if (!looksLikeOsm(bytes)) throw new Error('unexpected response');
     const tail = new TextDecoder().decode(bytes.subarray(Math.max(0, bytes.length - 1024)));
     if (/<remark>[^<]*(error|timed out|out of memory)/i.test(tail)) throw new Error('Overpass runtime error');
     return bytes;
   }, opts);
+}
+
+/**
+ * Fetch the OSM XML for an area as bytes (osm2streets wants a Uint8Array): the OSM API
+ * first, then Overpass (its endpoints in turn). Throws one Error naming every failure.
+ */
+export async function fetchOsmXml(bbox, { fetch = globalThis.fetch, osmApi = {}, overpass = {} } = {}) {
+  try { return await fetchOsmApiXml(bbox, { fetch, ...osmApi }); } catch (apiErr) {
+    try { return await fetchOverpassXml(bbox, { fetch, ...overpass }); } catch (e) {
+      throw new Error(`${apiErr.message}; ${e.message}`);
+    }
+  }
 }
 
 const baseType = (t) => String(t ?? '').replace(/\(.*\)/, '');
