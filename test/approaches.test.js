@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initSync, JsStreetNetwork } from '../vendor/osm2streets/osm2streets_js.js';
 import { areaBbox, bboxCenter, buildLanes } from '../src/osm/lanes.js';
-import { matchApproaches, APPROACH_RADIUS_M } from '../src/osm/approaches.js';
+import { matchApproaches, approachCandidates, pickHead, APPROACH_RADIUS_M } from '../src/osm/approaches.js';
 
 const C = { lat: 41.4, lon: 2.0 };
 const LAT = 6371000 * Math.PI / 180; // metres per degree of latitude
@@ -66,6 +66,12 @@ test('with two intersections an approach belongs to the nearer centre; edited ma
   assert.equal(r.unmatched.length, 1);
 });
 
+test('a stop line between two junctions belongs to the one it heads at, even if the other is slightly nearer', () => {
+  const a = ix('A', 0, 0, [mast('mA', 4, -14)]), b = ix('B', 0, -70, [mast('mB', 4, -84)]); // B is 36 m behind the stop line, A 34 m ahead
+  const { matches } = matchApproaches(data([[0, -34, 0]]), C, [b, a]);
+  assert.deepEqual(matches.map((m) => m.ixId), ['A']);
+});
+
 // ---- real data: Pont (test/data/pont.osm.xml + its real masts) ----
 initSync({ module: readFileSync(new URL('../vendor/osm2streets/osm2streets_js_bg.wasm', import.meta.url)) });
 const BBOX = areaBbox([{ lat: 41.4143, lon: 2.0121 }]);
@@ -89,4 +95,23 @@ test('Pont: every mast gets an approach; heading 335° along Carretera de Molins
   const carretera = matches.filter((m) => wayName(m.way) === 'Carretera de Molins de Rei a Caldes' && Math.abs(m.bearing - 335) <= 10);
   assert.ok(carretera.length >= 1);
   for (const m of carretera) assert.equal(m.mastId, south.id);
+});
+
+// Two parallel one-way roads arrive on ~335° (Carretera de Molins de Rei a Caldes, Avinguda de Caldes):
+// the mast bearing can't tell them apart, the lanes you are on can.
+test('Pont: ego 40 m before the stop line on each parallel road picks that road\'s head', () => {
+  const streets = { kind: 'lanes', center: bboxCenter(BBOX), data: lanes };
+  const set = approachCandidates(streets, [pont]);
+  const headOfMast = (id) => pont.masts.find((m) => m.id.endsWith(id)).headIds[0];
+  const onRoad = (name, mast) => {
+    // the stop point of the road's first approach (the one furthest back), 40 m back along its own direction
+    const cs = set.cands.filter((c) => wayName(c.way) === name && Math.abs(c.bearing - 335) <= 10 && c.headId === headOfMast(mast));
+    assert.ok(cs.length >= 1, `${name}: no approach`);
+    const c = cs.reduce((a, b) => (b.y < a.y ? b : a));
+    const ego = { e: c.x - 40 * c.dx, n: c.y - 40 * c.dy };
+    const s = pickHead({ set, ixId: pont.id, ego, course: 335, prev: null, fixId: 1 });
+    assert.deepEqual([s.headId, s.reason], [headOfMast(mast), 'lane'], `${name} at ${ego.e.toFixed(1)},${ego.n.toFixed(1)}`);
+  };
+  onRoad('Avinguda de Caldes', 'jw8ph');
+  onRoad('Carretera de Molins de Rei a Caldes', 'h9sy6');
 });

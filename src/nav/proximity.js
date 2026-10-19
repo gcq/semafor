@@ -116,15 +116,19 @@ export function viewBearing({ heading, headingFrozen, speed, pos, target, minSpe
 
 /**
  * The junction Live shows when not manually selected: the best-ranked one ahead.
- * When moving with nothing in the cone (you just passed the last one), keep the
- * previous one while it is within `keepM`, else the nearest junction.
- * @param {{ranked:Array<{intersection:Intersection}>, intersections:Intersection[], pos:GeoPoint|null, lastId:string|null, moving:boolean, keepM?:number}} o
+ * `passedId`: the junction whose stop line you just crossed (while moving it no longer counts
+ * as ahead, so Live moves on to the next mapped junction straight away). Only when there is
+ * none ahead in the cone (you just passed the last one) keep the passed / previous one while
+ * it is within `keepM`, else the nearest junction.
+ * @param {{ranked:Array<{intersection:Intersection}>, intersections:Intersection[], pos:GeoPoint|null, lastId:string|null, moving:boolean, keepM?:number, passedId?:string|null}} o
  * @returns {Intersection|null}
  */
-export function pickIntersection({ ranked, intersections, pos, lastId, moving, keepM = 300 }) {
-  if (ranked[0]) return ranked[0].intersection;
+export function pickIntersection({ ranked, intersections, pos, lastId, moving, keepM = 300, passedId = null }) {
+  const ahead = moving && passedId ? ranked.filter((r) => r.intersection.id !== passedId) : ranked;
+  if (ahead[0]) return ahead[0].intersection;
   if (!pos) return intersections[0] ?? null;
-  const last = moving && lastId ? intersections.find((i) => i.id === lastId) : null;
+  const keepId = moving ? passedId ?? lastId : null;
+  const last = keepId ? intersections.find((i) => i.id === keepId) : null;
   if (last && distanceM(pos, last.location) <= keepM) return last;
   let best = null, bestD = Infinity;
   for (const ix of intersections) {

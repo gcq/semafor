@@ -5,7 +5,8 @@ import * as store from '../store/db.js';
 import { nextOnset, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
 import { guardAspect, tapped } from '../predict/sequence.js';
 import { deadReckon, offsetBetween, decayOffset, applyOffset, easeAngle } from '../nav/motion.js';
-import { rankNext, headForApproach, viewBearing, pickIntersection } from '../nav/proximity.js';
+import { rankNext, headForApproach, viewBearing, pickIntersection, distanceM } from '../nav/proximity.js';
+import { approachCandidates, pickHead, toLocal } from '../osm/approaches.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
@@ -41,6 +42,8 @@ const state = {
   shown: new Map(),        // headId -> { aspect, sinceMs, stepAt? }: the colour the sequence guard shows
   tables: new Map(),       // phaseTable memo: `${ixId}` -> { model, minute, table }
   lastIxId: null,          // to reset the manual head pick when the intersection changes
+  headPicks: new Map(),    // ixId -> pickHead state (approach you're on, see src/osm/approaches.js); per junction so Live flipping between two close ones loses nothing
+  passedIxId: null,        // the junction whose stop line you crossed last: Live moves on to another one ahead, else keeps showing this
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
 };
@@ -142,7 +145,7 @@ function currentIntersection() {
     const found = state.intersections.find((i) => i.id === state.selectedId);
     if (found) return found;
   }
-  return pickIntersection({ ranked: state.ranked, intersections: state.intersections, pos: state.pos, lastId: state.lastRankedId, moving: state.heading != null && state.speed >= 1.5 });
+  return pickIntersection({ ranked: state.ranked, intersections: state.intersections, pos: state.pos, lastId: state.lastRankedId, moving: state.heading != null && state.speed >= 1.5, passedId: state.passedIxId });
 }
 
 function recomputeRanking() {
@@ -152,7 +155,12 @@ function recomputeRanking() {
 }
 
 // ---------- render loop ----------
+const PASSED_FORGET_M = 120; // a passed junction counts as passed until you are this far from it
 function tick() {
+  const shown = !state.selectedId && state.intersections.find((i) => i.id === state.lastIxId);
+  if (shown) stepHeadPick(shown); // may mark `shown` passed, before the ranking picks what's next
+  const passed = state.passedIxId && state.intersections.find((i) => i.id === state.passedIxId);
+  if (!passed || !state.pos || distanceM(state.pos, passed.location) > PASSED_FORGET_M) state.passedIxId = null;
   recomputeRanking();
   const ix = currentIntersection();
   if (ix && ix.id !== state.lastIxId) { state.sceneHead = null; state.lastIxId = ix.id; }
@@ -305,22 +313,38 @@ function approachBearing(ix) {
   return viewBearing({ heading: state.heading, headingFrozen: state.headingFrozen, speed: state.speed, pos: state.pos, target: ix.location });
 }
 
-// Head to predict + capture: a pole you tapped, else the head facing your
-// approach (near-side mast), else the first head.
+// One head-picker step per GPS fix (idempotent within a fix) from the raw fix position: the
+// approach you are on, see pickHead. Nothing without lane geometry, a fix or a course.
+let lastPick = null; // { ixId, headId, reason } for the debug hook
+function stepHeadPick(ix) {
+  const streets = streetFeed.get(ix.id);
+  const ixs = [ix, ...streetFeed.neighborIds(ix.id).map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)];
+  const set = state.fix && state.pos && approachCandidates(streets, ixs);
+  const hp = pickHead({ set, ixId: ix.id, ego: set && toLocal(state.pos, streets.center), course: approachBearing(ix), prev: state.headPicks.get(ix.id) ?? null, fixId: state.fix?.t });
+  state.headPicks.set(ix.id, hp);
+  if (hp.reason === 'passed') state.passedIxId = ix.id; // Live moves on from it if another junction is ahead, else keeps it
+  return hp;
+}
+
+// Head to predict + capture: a pole you tapped, else the head of the approach you are on (lanes),
+// else the head facing your approach by bearing (near-side mast), else the first head.
 function resolveActiveHead(ix, heads) {
   if (!heads.length) return null;
-  if (state.sceneHead?.ixId === ix.id) { const h = heads.find((x) => x.id === state.sceneHead.id); if (h) return h; }
+  const hp = stepHeadPick(ix);
+  const pick = (h, reason) => { lastPick = { ixId: ix.id, headId: h.id, reason, key: hp.key, nextIxId: hp.nextIxId, passedIxId: state.passedIxId }; return h; };
+  if (state.sceneHead?.ixId === ix.id) { const h = heads.find((x) => x.id === state.sceneHead.id); if (h) return pick(h, 'manual'); }
+  if (hp.headId) { const h = heads.find((x) => x.id === hp.headId); if (h) return pick(h, hp.reason); }
   const facing = headForApproach(ix, approachBearing(ix));
-  if (facing) { const h = heads.find((x) => x.id === facing); if (h) return h; }
+  if (facing) { const h = heads.find((x) => x.id === facing); if (h) return pick(h, 'bearing'); }
   const mv = ix.movements?.find((m) => !m.unsignalized && m.headId);
-  if (mv?.headId) { const h = heads.find((x) => x.id === mv.headId); if (h) return h; }
-  return heads[0];
+  if (mv?.headId) { const h = heads.find((x) => x.id === mv.headId); if (h) return pick(h, 'bearing'); }
+  return pick(heads[0], 'bearing');
 }
 
 // ---------- live canvas: rAF loop, dead reckoning, eased orientation ----------
 const FRAME_MS = 28; // ~30 fps cap (every 2nd frame at 60 Hz)
 let rafId = 0, lastDraw = 0, lastFrameT = 0, shown = null; // shown: { ixId, pos, off, up }
-window.__onda = { lastScene: { ixId: null, upDeg: null, scale: null, ego: null }, frames: [] }; // read-only debug hook (tools/e2e-drive.mjs)
+window.__onda = { lastScene: { ixId: null, upDeg: null, scale: null, ego: null }, frames: [], head: null }; // read-only debug hook (tools/e2e-drive.mjs); head: { ixId, headId, reason: lane|latched|passed|bearing|manual, key (approach), nextIxId, passedIxId }
 
 function drawFrame(ts, force) {
   const sc = state.liveScene, canvas = $('live-scene');
@@ -363,6 +387,7 @@ function renderLive(ix) {
   const now = Date.now();
   const heads = headsOf(ix);
   const active = resolveActiveHead(ix, heads);
+  window.__onda.head = lastPick;
 
   // scene: a light is coloured only when the model knows enough to say (>= 2 colours tapped)
   // The canvas itself is drawn by the rAF loop (drawFrame); this hands it what to draw, refreshed on the tick.
