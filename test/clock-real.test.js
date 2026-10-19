@@ -2,6 +2,8 @@
 // observations}), which is gitignored and must NEVER be copied into a tracked
 // file. Skipped when absent. For each tap, the model is built from strictly
 // earlier taps only and asked when that tap's mark changes next.
+process.env.TZ = 'Europe/Madrid'; // plan windows are local time-of-day and the lights are in Spain
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
