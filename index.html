@@ -198,11 +198,12 @@
     /* ---- Car layout (Tesla browser: landscape) ----
        The Tesla browser window is narrower than 900 CSS px (the map takes part
        of the screen), so key on landscape + enough height; the height floor
-       keeps a phone turned sideways (~400 px tall) on the phone layout. */
-       Live becomes exactly two columns that fill the screen without scrolling:
-       the scene with a huge, light-colored countdown | the loud tap buttons
-       and what's coming up. Everything read while driving is 18 px or more. */
-    .count[data-guess] #count-num { opacity: .55; font-style: italic; }
+       keeps a phone turned sideways (~400 px tall) on the phone layout.
+       Live becomes a borderless map (left 2/3, edge to edge, no topbar) and a
+       rail (right 1/3): tabs, GPS note, junction, countdown card, coming up,
+       and the loud tap buttons pinned to the bottom. app.js sets body.live-car
+       and moves the tabs, GPS note and countdown into the rail while it shows.
+       Everything read while driving is 18 px or more. */
     .count[data-aspect="green"] { color: var(--green); }
     .count[data-aspect="red"] { color: var(--red); }
     .count[data-aspect="amber"], .count[data-aspect="flash-amber"] { color: var(--yellow); }
@@ -212,34 +213,52 @@
       .tabs { flex: 1; flex-basis: auto; margin-left: auto; max-width: 720px; }
       .tabs button { min-height: 44px; font-size: var(--fs-md); }
 
-      #view-live.active { height: 100%; }
-      .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; height: 100%; min-height: 400px; padding-bottom: 12px; }
-      .live-grid .scene-wrap { margin: 0; height: 100%; }
-      .live-grid #live-scene { height: 100%; max-height: none; }
-      .live-side { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+      body.live-car { padding: 0; }
+      body.live-car .topbar { display: none; }
+      body.live-car main { overflow: hidden; }
+      body.live-car #view-live.active { height: 100%; }
+      body.live-car .live-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); height: 100%; min-height: 0; }
+      body.live-car .scene-wrap { margin: 0; height: 100%; min-height: 0; }
+      body.live-car #live-scene { height: 100%; max-height: none; border: 0; border-radius: 0; }
 
-      .count { font-size: clamp(88px, 17vh, 160px); }
-      .count .unit { font-size: 40px; }
-      .ind-label, .count-cap { font-size: 22px; }
-      .scene-hud { top: 14px; }
+      /* The rail: a column of flex items. #active-head dissolves (display: contents)
+         so its name and tap buttons can be ordered around "Coming up". */
+      body.live-car .live-side { display: flex; flex-direction: column; gap: clamp(4px, .8vh, 10px); height: 100%; min-height: 0; padding: clamp(10px, 1.4vh, 16px) 16px; overflow-y: auto; }
+      body.live-car .live-side > * { flex: none; }
+      body.live-car #active-head { display: contents; }
+      body.live-car .tabs { order: 0; max-width: none; margin: 0; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+      body.live-car .tabs button { min-height: clamp(42px, 4.6vh, 54px); padding: 6px 4px; font-size: 18px; }
+      body.live-car #tab-live { display: none; }
+      body.live-car #gps-sub { order: 1; font-size: 18px; }
+      body.live-car #gps-sub:empty { display: none; }
+      body.live-car .ix-head { order: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+      body.live-car .ix-name { font-size: clamp(24px, 3.2vh, 38px); line-height: 1.2; text-align: left; }
+      body.live-car .meta { justify-content: flex-start; margin: 0; }
+      body.live-car .meta .badge { font-size: 18px; padding: 2px 12px; }
+      body.live-car .scene-hud { order: 3; position: static; pointer-events: auto; text-align: left; padding: 4px 14px; background: var(--panel); border: 1px solid var(--line); border-left: 8px solid var(--line); border-radius: var(--radius); }
+      body.live-car .scene-hud:has(.count[data-aspect="green"]) { border-left-color: var(--green); }
+      body.live-car .scene-hud:has(.count[data-aspect="red"]) { border-left-color: var(--red); }
+      body.live-car .scene-hud:has(.count[data-aspect="amber"]), body.live-car .scene-hud:has(.count[data-aspect="flash-amber"]) { border-left-color: var(--yellow); }
+      body.live-car .count { font-size: clamp(88px, 15vh, 160px); line-height: .85; }
+      body.live-car .count[data-guess] #count-num { opacity: .55; font-style: italic; }
+      body.live-car .count .unit { font-size: 32px; }
+      body.live-car .ind-label, body.live-car .count-cap { font-size: clamp(18px, 2vh, 22px); line-height: 1.25; text-shadow: none; }
+      body.live-car .ah-name { order: 4; font-size: clamp(20px, 2.4vh, 28px); line-height: 1.2; text-align: left; margin: 0; }
+      body.live-car .upcoming { order: 5; margin: 0; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+      body.live-car .upcoming h3 { font-size: 18px; margin: 0 0 4px; }
+      body.live-car .row { padding: clamp(4px, .8vh, 12px) 12px; margin-bottom: 4px; gap: 10px; }
+      body.live-car .row .name, body.live-car .row .eta { font-size: clamp(18px, 2vh, 24px); }
+      body.live-car .dot { width: 18px; height: 18px; }
+      body.live-car #live-hint { order: 6; font-size: 18px; text-align: left; margin: 0; }
+      body.live-car #live-hint:empty { display: none; }
+      body.live-car .tap-lamps { order: 7; margin-top: auto; gap: 10px; }
+      body.live-car .tap-more { order: 8; margin-top: 0; gap: 10px; }
+      body.live-car .tap-undo { order: 9; justify-content: flex-start; }
+      body.live-car .tap-hint { order: 10; font-size: 18px; line-height: 1.2; text-align: left; margin: 0; }
+      body.live-car .cap { padding: clamp(12px, 2.3vh, 34px) 0; font-size: clamp(24px, 3vh, 30px); border-radius: 18px; }
+      body.live-car .cap.small { padding: clamp(8px, 1.4vh, 18px) 0; font-size: 18px; }
+      body.live-car .btn.quiet { font-size: 18px; min-height: 40px; padding: 4px 12px; }
 
-      .ix-name { font-size: 28px; text-align: left; }
-      .meta { justify-content: flex-start; margin: 6px 0 10px; }
-      .meta .badge { font-size: 18px; padding: 4px 12px; }
-      .ah-name { font-size: 22px; text-align: left; margin: 4px 0 10px; }
-      .live-side .cap { padding: 40px 0; font-size: 28px; border-radius: 22px; }
-      .live-side .cap.small { padding: 24px 0; font-size: 22px; }
-      .live-side .tap-lamps, .live-side .tap-more { gap: 12px; }
-      .live-side .tap-more { margin-top: 12px; }
-      .live-side .tap-hint { font-size: 18px; text-align: left; margin-top: 4px; }
-      .live-side .tap-undo { justify-content: flex-start; }
-      .live-side .btn.quiet { font-size: 20px; min-height: 52px; }
-      .upcoming { margin-top: 12px; }
-      .upcoming h3 { font-size: 18px; }
-      .live-side .row { padding: 11px 16px; margin-bottom: 6px; }
-      .live-side .row .name, .live-side .row .eta { font-size: 20px; }
-      .live-side .dot { width: 20px; height: 20px; }
-      .live-side .hint { font-size: 18px; text-align: left; }
       /* Capture is used at the lights too: same big buttons and readable text */
       #view-capture .cap { padding: 40px 0; font-size: 28px; border-radius: 22px; }
       #view-capture .cap.small { padding: 24px 0; font-size: 22px; }
@@ -249,6 +268,9 @@
       #view-capture .field > label { font-size: var(--fs-md); width: 140px; }
       #view-capture select { font-size: 18px; min-height: 48px; }
       #view-capture .cap-log { font-size: var(--fs-md); }
+
+      /* The update bar overlays the top of the rail instead of the bottom of the screen */
+      body.live-car .update-banner { left: calc(200vw / 3 + 12px); right: 12px; top: 12px; bottom: auto; }
     }
     [hidden] { display: none !important; }
   </style>
@@ -283,8 +305,10 @@
         </div>
       </div>
       <div class="live-side">
-        <div class="ix-name" id="ix-name">No intersection selected</div>
-        <div class="meta" id="meta"></div>
+        <div class="ix-head">
+          <div class="ix-name" id="ix-name">No intersection selected</div>
+          <div class="meta" id="meta"></div>
+        </div>
         <div class="active-head" id="active-head" hidden></div>
         <div class="upcoming">
           <h3>Coming up</h3>

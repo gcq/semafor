@@ -697,11 +697,28 @@ function syncApi() {
 }
 
 
+// Car layout: in landscape (same query as the CSS) Live is a borderless map plus a
+// rail. While it shows, body.live-car is set and the tabs, GPS note and countdown
+// move into the rail (one instance of each, so their handlers keep working); leaving
+// Live or rotating moves them back.
+const carMq = window.matchMedia('(min-width: 600px) and (min-height: 450px) and (min-aspect-ratio: 1/1)');
+function syncCarLive() {
+  const on = carMq.matches && $('view-live').classList.contains('active');
+  if (document.body.classList.contains('live-car') === on) return;
+  document.body.classList.toggle('live-car', on);
+  const rail = document.querySelector('.live-side'), tabs = document.querySelector('.tabs'), hud = document.querySelector('.scene-hud');
+  if (on) rail.append(tabs, $('gps-sub'), hud);
+  else { document.querySelector('.topbar').append($('gps-sub'), tabs); document.querySelector('.scene-wrap').append(hud); }
+}
+carMq.addEventListener('change', syncCarLive);
+syncCarLive(); // before the first paint: the module runs before boot's awaits resume
+
 function showView(name) {
   for (const v of ['live', 'capture', 'edit', 'analyze', 'sync']) {
     $(`view-${v}`).classList.toggle('active', name === v);
     $(`tab-${v}`).setAttribute('aria-selected', String(name === v));
   }
+  syncCarLive();
   syncLoop();
   if (name === 'edit') refreshEditor();
   if (name === 'analyze') refreshAnalyze();
