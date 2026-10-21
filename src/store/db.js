@@ -10,7 +10,7 @@
 import { mergeBundles } from '../sync/merge.js';
 
 const DB_NAME = 'onda';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 // `plans` / `headPositions` on an intersection are derived data from old
 // versions (the clock model recomputes timing from taps alone). Strip them
@@ -47,6 +47,11 @@ function open() {
       // v5: street geometry (osm2streets lanes / plain lines) per junction cluster. Derived, same rules.
       if (!db.objectStoreNames.contains('streets'))
         db.createObjectStore('streets', { keyPath: 'id' });
+      // v6: GPS tracks around taps and dismissed re-file suggestions. Both sync (immutable records, union by id).
+      if (!db.objectStoreNames.contains('tracks'))
+        db.createObjectStore('tracks', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('dismissals'))
+        db.createObjectStore('dismissals', { keyPath: 'id' });
       // v4: one-time cleanup of legacy derived fields already stored
       if (ev.oldVersion > 0 && ev.oldVersion < 4) {
         const cur = req.transaction.objectStore('intersections').openCursor();
@@ -117,6 +122,22 @@ export const deleteObservation = (id) => tx(['observations', 'tombstones'], 'rea
   s.tombstones.put({ id, kind: 'obs', deletedAt: Date.now() });
 });
 
+/**
+ * Re-file a tap (an accepted suggestion, same as tools/refile.mjs): the new observation is added and the
+ * old id removed + tombstoned in ONE transaction, so there is never a moment with both or neither.
+ */
+export const refileObservation = (oldId, newObs, tombstone) => tx(['observations', 'tombstones'], 'readwrite', (s) => {
+  s.observations.put(newObs);
+  s.observations.delete(oldId);
+  s.tombstones.put(tombstone);
+});
+
+// --- GPS tracks and dismissals (synced; see sync/merge.js) ---
+export const putTrack = (rec) => tx('tracks', 'readwrite', (s) => { s.tracks.put(rec); });
+export const allTracks = () => tx('tracks', 'readonly', (s) => reqValue(s.tracks.getAll()));
+export const putDismissal = (d) => tx('dismissals', 'readwrite', (s) => { s.dismissals.put(d); });
+export const allDismissals = () => tx('dismissals', 'readonly', (s) => reqValue(s.dismissals.getAll()));
+
 /** Every observation as one flat list (the clock model is global). */
 export const allObservations = () => tx('observations', 'readonly', (s) => reqValue(s.observations.getAll()));
 
@@ -165,13 +186,18 @@ export function setPref(key, value) {
 
 // --- portability ---
 export async function exportAll() {
-  const [intersections, observations, tombstones] = await tx(['intersections', 'observations', 'tombstones'], 'readonly', (s) => {
-    const a = reqValue(s.intersections.getAll()), b = reqValue(s.observations.getAll()), c = reqValue(s.tombstones.getAll());
+  const [intersections, observations, tombstones, tracks, dismissals] = await tx(['intersections', 'observations', 'tombstones', 'tracks', 'dismissals'], 'readonly', (s) => {
+    const rs = ['intersections', 'observations', 'tombstones', 'tracks', 'dismissals'].map((n) => reqValue(s[n].getAll()));
     const box = {};
-    Object.defineProperty(box, '_result', { get: () => [a._result, b._result, c._result] });
+    Object.defineProperty(box, '_result', { get: () => rs.map((r) => r._result) });
     return box;
   });
-  return { version: 2, exportedAt: Date.now(), intersections: intersections.map(stripLegacy), observations, tombstones };
+  const dead = new Set(tombstones.filter((t) => t.kind === 'obs').map((t) => t.id));
+  return {
+    version: 2, exportedAt: Date.now(), intersections: intersections.map(stripLegacy), observations, tombstones,
+    tracks: tracks.filter((r) => !(r.obsIds ?? []).every((id) => dead.has(id))), // a track of undone / re-filed taps is not worth sending
+    dismissals,
+  };
 }
 
 /**
@@ -180,10 +206,10 @@ export async function exportAll() {
  */
 export async function importAll(bundle, { merge = true } = {}) {
   if (merge) return applyMerged(mergeBundles(await exportAll(), bundle).merged);
-  await tx(['intersections', 'observations', 'tombstones'], 'readwrite', (s) => {
-    s.intersections.clear(); s.observations.clear(); s.tombstones.clear();
+  await tx(['intersections', 'observations', 'tombstones', 'tracks', 'dismissals'], 'readwrite', (s) => {
+    s.intersections.clear(); s.observations.clear(); s.tombstones.clear(); s.tracks.clear(); s.dismissals.clear();
   });
-  return applyMerged({ intersections: bundle.intersections ?? [], observations: bundle.observations ?? [], tombstones: bundle.tombstones ?? [] });
+  return applyMerged({ intersections: bundle.intersections ?? [], observations: bundle.observations ?? [], tombstones: bundle.tombstones ?? [], tracks: bundle.tracks ?? [], dismissals: bundle.dismissals ?? [] });
 }
 
 /**
@@ -192,14 +218,14 @@ export async function importAll(bundle, { merge = true } = {}) {
  * edit, new intersection or undo made after the bundle was read isn't clobbered.
  */
 export function applyMerged(merged) {
-  return tx(['intersections', 'observations', 'tombstones'], 'readwrite', (s) => {
-    const ix = s.intersections.getAll(), obsKeys = s.observations.getAllKeys(), tb = s.tombstones.getAll();
-    let pending = 3;
+  return tx(['intersections', 'observations', 'tombstones', 'tracks', 'dismissals'], 'readwrite', (s) => {
+    const ix = s.intersections.getAll(), obsKeys = s.observations.getAllKeys(), tb = s.tombstones.getAll(), trk = s.tracks.getAll(), dis = s.dismissals.getAllKeys();
+    let pending = 5;
     const done = () => {
       if (--pending) return;
       const have = new Set(obsKeys.result);
       const current = { intersections: ix.result, observations: [], tombstones: tb.result };
-      const { merged: m } = mergeBundles(current, { ...merged, observations: [] });
+      const { merged: m } = mergeBundles(current, { ...merged, observations: [], tracks: [], dismissals: [] });
       const keep = new Set(m.intersections.map((i) => i.id));
       for (const i of ix.result) if (!keep.has(i.id)) s.intersections.delete(i.id);
       const before = new Map(ix.result.map((i) => [i.id, i]));
@@ -211,7 +237,13 @@ export function applyMerged(merged) {
       for (const o of merged.observations ?? []) if (!have.has(o.id) && !deadObs.has(o.id)) s.observations.put(o);
       for (const id of deadObs) if (have.has(id)) s.observations.delete(id);
       for (const t of m.tombstones) s.tombstones.put(t);
+      // tracks + dismissals: add what is new, drop tracks whose taps are all gone
+      const gone = (r) => (r.obsIds ?? []).every((id) => deadObs.has(id));
+      const haveTrk = new Set(trk.result.map((r) => r.id)), haveDis = new Set(dis.result);
+      for (const r of merged.tracks ?? []) if (!haveTrk.has(r.id) && !gone(r)) s.tracks.put(r);
+      for (const r of trk.result) if (gone(r)) s.tracks.delete(r.id);
+      for (const d of merged.dismissals ?? []) if (!haveDis.has(d.id)) s.dismissals.put(d);
     };
-    ix.onsuccess = obsKeys.onsuccess = tb.onsuccess = done;
+    ix.onsuccess = obsKeys.onsuccess = tb.onsuccess = trk.onsuccess = dis.onsuccess = done;
   });
 }

@@ -1,6 +1,7 @@
 // Prediction from the clock model (src/inference/clock.js). Pure: the Model and
 // `now` in, a countdown out. See docs/clock-model.md ("Prediction").
 
+import { successor } from './sequence.js';
 import { dayKeyOf } from '../inference/clock.js';
 
 const mod = (x, m) => ((x % m) + m) % m;
@@ -112,6 +113,40 @@ export function nextOnset(model, headId, aspect = 'green', now = Date.now()) {
   const p = predictMark(model, headId, aspect, now);
   if (p.unpredictable) return p;
   return { inSec: round1((p.nextMs - now) / 1000), plusMinus: p.plusMinus, basis: p.basis, planId: p.planId, ...(p.guess && { guess: true }) };
+}
+
+const SIGNAL = ['green', 'amber', 'red'];
+
+/**
+ * The next phase change of a light: the soonest onset among its tapped colours other than the
+ * one shown (`shown`, default `currentAspect`). If `shown` is a colour the model has already left
+ * (the display guard is holding it), it is overdue: its successor in the guard's order, in 0 s,
+ * with the ± and basis of the model's current mark. Only for a light whose whole cycle is known (>= 2
+ * tapped colours, all predictable, all green/amber/red) — with just green and red the change
+ * after green is red, nothing is invented in between. null otherwise: the caller falls back to
+ * `nextOnset(..., 'green')`.
+ * @returns {{ aspect:string, inSec:number, plusMinus:number, basis:string, guess?:true } | null}
+ */
+export function nextChange(model, headId, now = Date.now(), shown = undefined) {
+  const light = model.lights?.[headId];
+  if (!light || light.aspects.length < 2 || light.aspects.some((a) => !SIGNAL.includes(a))) return null;
+  const cur = shown ?? currentAspect(model, headId, now);
+  if (!cur) return null;
+  const modelNow = currentAspect(model, headId, now);
+  // (a shown colour whose own onset is < 1 s away is the display a hair ahead of the model, not behind it)
+  if (shown && modelNow && shown !== modelNow && predictMark(model, headId, shown, now).nextMs - now > 1000) {
+    const p = predictMark(model, headId, modelNow, now);
+    return { aspect: successor(shown, light.aspects), inSec: 0, plusMinus: p.plusMinus, basis: p.basis, ...(p.guess && { guess: true }) };
+  }
+  let best = null;
+  for (const a of SIGNAL.filter((x) => light.aspects.includes(x))) {
+    const p = predictMark(model, headId, a, now);
+    if (p.unpredictable) return null;
+    if (a !== cur && (!best || p.nextMs < best.p.nextMs)) best = { a, p };
+  }
+  if (!best) return null;
+  const { p } = best;
+  return { aspect: best.a, inSec: Math.max(0, round1((p.nextMs - now) / 1000)), plusMinus: p.plusMinus, basis: p.basis, ...(p.guess && { guess: true }) };
 }
 
 /**

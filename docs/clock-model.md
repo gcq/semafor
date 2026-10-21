@@ -118,6 +118,18 @@ Predicted change time of mark k on day d (no drift):
     window that has the mark, same logic, always `guess: true`, basis
     `'guess · other time of day'`. Still unpredictable: no taps for the light,
     no tap of that aspect in any plan.
+- `nextChange(model, headId, now, shown?)` -> `{ aspect, inSec, plusMinus, basis, guess? }` or
+  `null`: the countdown target when the whole cycle of a light is known. The soonest
+  `predictMark` onset among the light's tapped colours other than `shown` (default
+  `currentAspect`), with that mark's `plusMinus` / `basis` / `guess`. So green+amber+red counts
+  to the next of them, and green+red counts green -> red (no amber is invented). `null` — the UI
+  falls back to `nextOnset(..., 'green')` ("green in N") — when the light has < 2 tapped colours,
+  a mark is unpredictable, there is no colour to exclude, or it has a colour outside
+  green/amber/red (`flash-amber`, `off`). `inSec` is never negative; an onset at `now` is 0, and
+  the shown colour is never the answer. If the guard holds a colour the model has already left
+  (`shown` != `currentAspect`), that colour is overdue: the answer is its successor in the
+  guard's order (`successor` in `sequence.js`) with `inSec` 0, and the model's current mark's
+  `plusMinus` / `basis` / `guess`.
 - `currentAspect(model, headId, now)` -> aspect, or `null` when the light has
   fewer than 2 tapped colours (then the UI shows only the countdown) or a mark
   is unpredictable (guessed heads do get a colour).
@@ -143,8 +155,9 @@ Predicted change time of mark k on day d (no drift):
   "recomputing…" and compute in `src/inference/worker.js`, then swap.
 - On each tap: `withTap` immediately, then full recompute in the worker
   (debounced ~1 s).
-- Live: "Green in 23 s ±2" + basis + up-to-date/recomputing indicator.
-  Current colour only when `currentAspect` is non-null.
+- Live: "Green in 23 s ±2" + basis + up-to-date/recomputing indicator when only the cycle
+  length is known; with every phase known (`nextChange` non-null) "Amber now · red in 8 s ±1":
+  a countdown to the next phase change. Current colour only when `currentAspect` is non-null.
 - Analyze: per group — plans/windows, cycle, hypothesis and σ, drift, corridor
   members, actuated marks, outliers with gain, useful next tap.
 

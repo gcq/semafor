@@ -74,12 +74,14 @@ export async function openBundle(bytes, key) {
   return JSON.parse(new TextDecoder().decode(await pipe(packed, new DecompressionStream('gzip'))));
 }
 
-const changed = (st) => st.ixAdded + st.ixUpdated + st.ixDeleted + st.obsAdded + (st.obsRemoved ?? 0) > 0;
+const changed = (st) => st.ixAdded + st.ixUpdated + st.ixDeleted + st.obsAdded + (st.obsRemoved ?? 0) + (st.trkAdded ?? 0) + (st.disAdded ?? 0) > 0;
 // Cheap "has my data changed since I last published?" check.
 const fingerprint = (b) => [
   (b.observations ?? []).length,
   (b.intersections ?? []).map((i) => `${i.id}:${i.rev ?? 0}:${i.updatedAt ?? 0}`).sort().join(','),
   (b.tombstones ?? []).length,
+  (b.tracks ?? []).length,
+  (b.dismissals ?? []).length,
 ].join('|');
 
 /**

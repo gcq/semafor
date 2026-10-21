@@ -5,7 +5,7 @@ const CYCLE = ['green', 'amber', 'red'];
 export const HOLD_MS = 3000, MIN_SHOW_MS = 1000;
 
 const guarded = (a) => CYCLE.includes(a);
-const successor = (a, known) => {
+export const successor = (a, known) => {
   const c = CYCLE.filter((x) => known.includes(x) || x === a);
   return c[(c.indexOf(a) + 1) % c.length];
 };

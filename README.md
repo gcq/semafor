@@ -43,14 +43,19 @@ src/
     heads.js          heads/masts/movements bookkeeping
   predict/next.js     model + now -> countdown, current aspect    (pure)
   nav/proximity.js    GPS -> forward cone -> ETA ranking          (pure)
-  store/db.js         IndexedDB (intersections, taps, model cache) + JSON import/export
+  nav/trackrec.js     GPS track around each tap: ring buffer, pending track, compact record  (pure)
+  osm/trackmatch.js   which approach / exit / head does a GPS track say?     (pure)
+  osm/suggest.js      suggested re-files from track + tap + map; accept = new tap + tombstone  (pure)
+  store/db.js         IndexedDB (intersections, taps, tracks, model cache) + JSON import/export
   sync/
-    merge.js          reconcile two bundles (newest edit wins, taps union)
+    merge.js          reconcile two bundles (newest edit wins, taps/tracks/dismissals union)
     net.js            encrypted peer sync over a public relay
   ui/                 app (glue), live-scene, editor, analyze, sync
 tools/teslamate/      optional: infer taps from GPS history
 test/                 node --test suites (clock, sync, nav, heads, ...)
 ```
+
+**Suggested re-files.** A tap stores one GPS fix, which cannot tell neighbouring junctions or parallel roads apart. So every tap also records the GPS track around it (30 s before until you are 85 m past the junction, ≤ 6 min). The track is a separate synced record, `trk_<tap id>`; the tap is stored first and never waits for it. From the road you came in on and the one you left on, the Analyze tab suggests moving a tap to the head you really were at (e.g. Straight vs Left on one pole): you Accept (new tap + tombstone for the old id, like `tools/refile.mjs`) or Dismiss (a synced record, so it stays dismissed). Never silent, and never for a cross-traffic light you chose to watch. Suggestions are recomputed from data, not stored. Tests: `test/trackrec`, `trackmatch`, `tracksync`; real-data report: `tools/trackfile-replay.mjs`; browser check: `tools/e2e-suggest.mjs`.
 
 Two UI modes, matching the two contexts:
 

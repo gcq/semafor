@@ -257,7 +257,7 @@
       body.live-car .tap-hint { order: 10; font-size: 18px; line-height: 1.2; text-align: left; margin: 0; }
       body.live-car .cap { padding: clamp(12px, 2.3vh, 34px) 0; font-size: clamp(24px, 3vh, 30px); border-radius: 18px; }
       body.live-car .cap.small { padding: clamp(8px, 1.4vh, 18px) 0; font-size: 18px; }
-      body.live-car .btn.quiet { font-size: 18px; min-height: 40px; padding: 4px 12px; }
+      body.live-car .btn.quiet { font-size: 18px; min-height: 44px; padding: 4px 12px; }
 
       /* Capture is used at the lights too: same big buttons and readable text */
       #view-capture .cap { padding: 40px 0; font-size: 28px; border-radius: 22px; }
@@ -271,6 +271,39 @@
 
       /* The update bar overlays the top of the rail instead of the bottom of the screen */
       body.live-car .update-banner { left: calc(200vw / 3 + 12px); right: 12px; top: 12px; bottom: auto; }
+    }
+    /* Short car screens. Tesla's expanded window is 1256x706 (parked); the collapsed one, the only
+       size usable while driving, is 773x601. Tight (<= 760 px tall): drop what is only teaching or
+       status (the tap hint, the "up to date" / "corridor" badges) so Coming up keeps room.
+       Compact (<= 650 px tall): the rail grows to 40% and everything is re-spaced so the tabs, junction,
+       countdown, all five tap buttons (44+ px) and a Coming up row fit with no scrolling. */
+    @media (min-width: 600px) and (min-height: 450px) and (min-aspect-ratio: 1/1) and (max-height: 760px) {
+      body.live-car .tap-hint, body.live-car #live-hint { display: none; }
+      body.live-car .meta .badge:not(.uncertain) { display: none; }
+      body.live-car .meta:not(:has(.badge.uncertain)) { display: none; }
+    }
+    @media (min-width: 600px) and (min-height: 450px) and (min-aspect-ratio: 1/1) and (max-height: 650px) {
+      body.live-car .live-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+      body.live-car .live-side { gap: 5px; padding: 8px 12px; }
+      body.live-car .tabs { gap: 4px; }
+      body.live-car .tabs button { position: relative; min-height: 44px; padding: 4px 0; font-size: 16px; }
+      body.live-car .tabs .badge { position: absolute; top: -5px; right: -3px; padding: 0 6px; font-size: 14px; line-height: 18px; }
+      body.live-car #gps-sub { font-size: 18px; line-height: 1.2; }
+      body.live-car .ix-head { gap: 2px 8px; }
+      body.live-car .ix-name { font-size: 22px; line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+      body.live-car .scene-hud { padding: 2px 12px 4px; border-left-width: 6px; }
+      body.live-car .count { font-size: clamp(72px, 13vh, 96px); }
+      body.live-car .count .unit { font-size: 28px; }
+      body.live-car .ind-label { line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      body.live-car .count-cap { line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+      body.live-car .ah-name { font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      body.live-car .tap-lamps, body.live-car .tap-more { gap: 6px; }
+      body.live-car .cap { padding: 0; min-height: 56px; font-size: 24px; border-radius: 14px; }
+      body.live-car .cap.small { padding: 0; min-height: 44px; font-size: 18px; }
+      body.live-car .upcoming h3 { font-size: 18px; margin: 0 0 3px; line-height: 1.2; }
+      body.live-car .row { padding: 3px 10px; margin-bottom: 3px; border-radius: 10px; }
+      body.live-car .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      body.live-car .update-banner { left: calc(60vw + 12px); }
     }
     [hidden] { display: none !important; }
   </style>

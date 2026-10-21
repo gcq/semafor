@@ -111,7 +111,7 @@ export const toLocal = toEN;
  * Ground-level approaches of the given intersections with their lane polygons, in metres
  * east/north of the entry centre. Cached per streets entry + masts.
  * @param {{kind?:string, center:{lat:number,lon:number}, data:{layers:Array}}|null} streets  cache entry (src/osm/lanes-cache.js)
- * @returns {{cands:Array<{key:string, ixId:string, headId:string, way:number, x:number, y:number, bearing:number, dx:number, dy:number, rings:number[][], ext:number[]|null}>, centres:Map<string,{e:number,n:number}>}|null}
+ * @returns {{cands:Array<{key:string, ixId:string, headId:string, mastId:string, way:number, x:number, y:number, bearing:number, dx:number, dy:number, rings:number[][], ext:number[]|null}>, centres:Map<string,{e:number,n:number}>}|null}
  */
 export function approachCandidates(streets, ixs) {
   if (streets?.kind !== 'lanes' || !streets.data?.layers?.length) return null;
@@ -127,7 +127,7 @@ export function approachCandidates(streets, ixs) {
       for (const r of rings) for (let i = 0; i < r.length; i += 2) { const d = Math.hypot(r[i] - m.x, r[i + 1] - m.y); if (d > fd) { fd = d; fx = r[i]; fy = r[i + 1]; } }
       const ext = fd > 1 ? [fx, fy, fx + ((fx - m.x) / fd) * PICK.reachM, fy + ((fy - m.y) / fd) * PICK.reachM] : null;
       return {
-        key: `${m.ixId}:${m.layer}:${m.appr}`, ixId: m.ixId, headId: m.headId, way: m.way, x: m.x, y: m.y, bearing: m.bearing,
+        key: `${m.ixId}:${m.layer}:${m.appr}`, ixId: m.ixId, headId: m.headId, mastId: m.mastId, way: m.way, x: m.x, y: m.y, bearing: m.bearing,
         dx: Math.sin(m.bearing * RAD), dy: Math.cos(m.bearing * RAD), rings, ext,
       };
     });

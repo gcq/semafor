@@ -8,7 +8,17 @@ import { ASPECT_INFO } from '../domain/model.js';
 
 let ctx = null;
 
-export function mountAnalyze(root, api) { ctx = { root, api }; render(); }
+export function mountAnalyze(root, api) {
+  ctx = { root, api };
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest?.('[data-sug]');
+    if (!b) return;
+    b.disabled = true;
+    const act = b.dataset.sug === 'accept' ? ctx.api.acceptSuggestion : ctx.api.dismissSuggestion;
+    Promise.resolve(act?.(b.dataset.id)).catch((err) => { console.error(err); b.disabled = false; });
+  });
+  render();
+}
 export function refreshAnalyze() { if (ctx) render(); }
 
 const fmt = (x, d = 1) => (Number.isFinite(x) ? String(Math.round(x * 10 ** d) / 10 ** d) : '?');
@@ -34,7 +44,25 @@ function render() {
     ${model ? globalHtml(model) : '<p class="note">No model yet. In Capture, watch a light and tap its color the instant it changes, for a few cycles.</p>'}
   </div>`;
   const groups = model ? (model.groups ?? []).map((g) => groupHtml(g, model, { ixOf, lightName, tapById })).join('') : '';
-  ctx.root.innerHTML = head + groups;
+  ctx.root.innerHTML = suggestHtml() + head + groups;
+}
+
+// Taps whose GPS track says another light was in front of you. Nothing moves until you accept.
+function suggestHtml() {
+  const list = ctx.api.suggestions?.() ?? [];
+  if (!list.length) return '';
+  const rows = list.map((s) => `
+    <div class="sub-card" data-suggestion="${esc(s.id)}">
+      <div class="kv"><span class="dot ${ASPECT_INFO[s.aspect]?.color ?? 'dark'}"></span><span class="k">${new Date(s.tapT).toLocaleString()} · ${esc(aspectName(s.aspect))}</span></div>
+      <p class="note small">${esc(s.fromLabel)} <b>→</b> ${esc(s.toLabel)}</p>
+      <p class="note small">${esc(s.why[0].toUpperCase() + s.why.slice(1))}.</p>
+      <div class="kv"><button class="btn primary" data-sug="accept" data-id="${esc(s.id)}">Accept</button>
+        <button class="btn" data-sug="dismiss" data-id="${esc(s.id)}">Dismiss</button></div>
+    </div>`).join('');
+  return `<div class="card" id="suggestions">
+    <h3>Suggested re-files <span class="tag actuated">${list.length}</span></h3>
+    <p class="note small">The GPS track around these taps says another light was the one in front of you. Accept moves the tap to that light; Dismiss keeps it where it is and stops asking.</p>
+    ${rows}</div>`;
 }
 
 function globalHtml(model) {

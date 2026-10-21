@@ -2,12 +2,14 @@
 // store, and paints the DOM on a timer. No framework.
 
 import * as store from '../store/db.js';
-import { nextOnset, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
+import { nextOnset, nextChange, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
 import { guardAspect, tapped } from '../predict/sequence.js';
 import { deadReckon, offsetBetween, decayOffset, applyOffset, easeAngle } from '../nav/motion.js';
 import { rankNext, headForApproach, viewBearing, pickIntersection, distanceM } from '../nav/proximity.js';
 import { approachCandidates, pickHead, toLocal } from '../osm/approaches.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
+import { createRecorder } from '../nav/trackrec.js';
+import { pendingSuggestions, refileOf } from '../osm/suggest.js';
 import { uid, ASPECT_INFO } from '../domain/model.js';
 import { headLabel } from '../inference/heads.js';
 import { mergeBundles } from '../sync/merge.js';
@@ -46,7 +48,22 @@ const state = {
   passedIxId: null,        // the junction whose stop line you crossed last: Live moves on to another one ahead, else keeps showing this
   lastObs: null,           // { id, ixId } for undo
   sceneBoxes: [],          // canvas hit boxes from the last draw
+  tracks: [],              // GPS tracks around taps (synced records, src/nav/trackrec.js)
+  dismissals: [],          // suggested re-files the user declined (synced)
+  suggestions: [],         // pending re-file suggestions, recomputed from taps + tracks + map + streets (never stored)
+  suggestCache: new Map(), // tap id -> suggestion|null; cleared when the map or the streets change
 };
+
+// Every tap opens (or joins) a pending GPS track so Analyze can check afterwards, from the road you came in on and the
+// one you left on, that the tap went to the right light. The tap itself is stored first and never waits for any of this.
+const trackRec = createRecorder({
+  junctions: () => state.intersections.filter((ix) => Number.isFinite(ix.location?.lat)).map((ix) => ({ id: ix.id, ...ix.location })),
+  onDone: (rec) => {
+    store.putTrack(rec).catch((e) => console.error('track save failed', e));
+    state.tracks = [...state.tracks.filter((r) => r.id !== rec.id), rec];
+    scheduleSuggest();
+  },
+});
 
 // Street geometry for the Live scene: derived, cached on-device, built in the
 // background (OSM API -> osm2streets lanes, plain lines as fallback; retried while
@@ -69,6 +86,8 @@ const refreshStreets = () => streetFeed.check(state.intersections).catch((e) => 
   navigator.storage?.persist?.().catch(() => {});
   state.intersections = await store.allIntersections();
   state.obs = await store.allObservations();
+  state.tracks = await store.allTracks().catch(() => []);
+  state.dismissals = await store.allDismissals().catch(() => []);
   noteLastTaps();
   // A manual pick lives only for this session: a remembered pick silently filed
   // later taps under the wrong intersection. Clear what older builds saved.
@@ -86,6 +105,8 @@ const refreshStreets = () => streetFeed.check(state.intersections).catch((e) => 
   safe('sync-url', () => { if (autoJoinFromUrl()) showView('sync'); });
   setInterval(() => safe('render', tick), 250);
   safe('render', tick);
+  scheduleSuggest(2000);
+  setInterval(() => scheduleSuggest(0), 30000); // the street geometry arrives in the background
   syncLoop();
   safe('streets', () => {
     refreshStreets(); // after the first render; loads the cache, then queues what's stale
@@ -125,6 +146,7 @@ function startGps() {
   navigator.geolocation.watchPosition(
     (p) => {
       state.pos = { lat: p.coords.latitude, lon: p.coords.longitude };
+      trackRec.fix({ t: Number.isFinite(p.timestamp) ? p.timestamp : Date.now(), lat: p.coords.latitude, lon: p.coords.longitude, heading: p.coords.heading, speed: p.coords.speed, acc: p.coords.accuracy });
       state.fix = { ...state.pos, speed: Number.isFinite(p.coords.speed) ? p.coords.speed : 0, course: Number.isFinite(p.coords.heading) ? p.coords.heading : null, t: performance.now() };
       state.fixNew = true;
       state.heading = Number.isFinite(p.coords.heading) ? p.coords.heading : null;
@@ -157,6 +179,7 @@ function recomputeRanking() {
 // ---------- render loop ----------
 const PASSED_FORGET_M = 120; // a passed junction counts as passed until you are this far from it
 function tick() {
+  trackRec.poll(Date.now());
   const shown = !state.selectedId && state.intersections.find((i) => i.id === state.lastIxId);
   if (shown) stepHeadPick(shown); // may mark `shown` passed, before the ranking picks what's next
   const passed = state.passedIxId && state.intersections.find((i) => i.id === state.passedIxId);
@@ -377,7 +400,8 @@ function syncLoop() {
   if (want && !rafId) { lastFrameT = 0; rafId = requestAnimationFrame(frameLoop); }
   else if (!want && rafId) { cancelAnimationFrame(rafId); rafId = 0; }
 }
-document.addEventListener('visibilitychange', syncLoop);
+document.addEventListener('visibilitychange', () => { syncLoop(); if (document.hidden) trackRec.flush(); });
+addEventListener('pagehide', () => trackRec.flush()); // closing: save the track as far as it got
 
 function renderLive(ix) {
   ix = ix ?? currentIntersection();
@@ -413,7 +437,8 @@ const REASONS = {
   actuated: 'sensor-controlled light · not predicted',
 };
 
-// Headline: "Green in 23 s ±2" for the active light, with how we know. When the
+// Headline: "Amber in 23 s ±2" (next phase change) when every phase of the light is known, else
+// "Green in 23 s ±2" (next green), for the active light, with how we know. When the
 // model can't say, show why instead of a number. The number takes the current
 // colour only when the model knows it (>= 2 colours tapped); else it stays neutral.
 function renderCountdown(active, now) {
@@ -429,8 +454,12 @@ function renderCountdown(active, now) {
 
   const cur = aspectNow(active.id, now);
   const curLabel = cur ? ASPECT_INFO[cur]?.label : null;
-  let pred = null;
-  try { pred = nextOnset(state.model, active.id, 'green', now); } catch (e) { console.error('nextOnset failed', e); }
+  // whole cycle known -> count down to the next phase change; else (cycle length only) to the next green
+  let pred = null, nextLabel = 'green';
+  try {
+    const ch = cur ? nextChange(state.model, active.id, now, cur) : null;
+    if (ch) { pred = ch; nextLabel = ch.aspect; } else pred = nextOnset(state.model, active.id, 'green', now);
+  } catch (e) { console.error('nextOnset failed', e); }
   if (!pred || pred.unpredictable) {
     const last = state.lastTaps[active.id];
     const echo = last && now - last.t < LAST_TAP_ECHO_MS ? ` · your last tap: ${ASPECT_INFO[last.aspect]?.label ?? last.aspect} ${Math.round((now - last.t) / 1000)} s ago` : '';
@@ -438,7 +467,7 @@ function renderCountdown(active, now) {
     return show(curLabel ? `${curLabel} now` : 'Green in', '--', why + echo, cur);
   }
   const pm = pred.plusMinus >= 0.5 ? `±${Math.round(pred.plusMinus)} s` : '';
-  show(curLabel ? `${curLabel} now · green in` : 'Green in', String(Math.max(0, Math.round(pred.inSec))),
+  show(curLabel ? `${curLabel} now · ${nextLabel} in` : 'Green in', String(Math.max(0, Math.round(pred.inSec))),
     [pm, pred.basis].filter(Boolean).join(' · '), cur, pred.guess);
 }
 
@@ -617,6 +646,7 @@ async function logAspect(intersectionId, headId, aspect) {
     where: state.pos ?? undefined, heading: state.heading ?? undefined,
   };
   await store.addObservation(ev);
+  try { trackRec.tap(ev); } catch (e) { console.error('track start failed', e); } // after the tap is safe; a failure here costs a suggestion, not a tap
   state.obs = [...state.obs, ev];
   state.lastTaps[headId] = { t: ev.t, aspect };
   state.shown.set(headId, tapped(aspect, ev.t));
@@ -647,6 +677,10 @@ function wireUi() {
 async function reloadData() {
   state.intersections = await store.allIntersections();
   state.obs = await store.allObservations();
+  state.tracks = await store.allTracks().catch(() => state.tracks);
+  state.dismissals = await store.allDismissals().catch(() => state.dismissals);
+  state.suggestCache.clear(); // the map may have changed
+  scheduleSuggest(0);
   noteLastTaps();
   scheduleRecompute(); // new data (sync/import/map edit): same key -> instant no-op
   refreshStreets(); // new or moved junction -> streets queued in the background
@@ -678,7 +712,64 @@ function analyzeApi() {
     taps: () => state.obs,
     nowMs: () => Date.now(),
     onChange: reloadData,
+    suggestions: () => state.suggestions,
+    acceptSuggestion,
+    dismissSuggestion,
   };
+}
+
+// ---------- suggested re-files (Analyze) ----------
+// Streets + junctions of the cluster a tap's junction belongs to (the same ones Live uses to pick the head).
+function suggestContext(ixId) {
+  const ix = state.intersections.find((i) => i.id === ixId), streets = ix && streetFeed.get(ixId);
+  if (!streets) return null;
+  const ixs = [ix, ...streetFeed.neighborIds(ixId).map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)];
+  const set = approachCandidates(streets, ixs);
+  return set && { set, center: streets.center, intersections: ixs };
+}
+
+let suggestTimer = null, streetsStamp = '';
+function scheduleSuggest(delay = 300) {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(() => {
+    try {
+      const stamp = state.intersections.map((i) => streetFeed.get(i.id)?.computedAt ?? 0).join();
+      if (stamp !== streetsStamp) { streetsStamp = stamp; state.suggestCache.clear(); }
+      const live = state.obs.filter((o) => o.where);
+      const next = pendingSuggestions({ obs: live, tracks: state.tracks, dismissed: state.dismissals.map((d) => d.obsId), contextOf: suggestContext, cache: state.suggestCache });
+      const changed = next.map((s) => s.id).join() !== state.suggestions.map((s) => s.id).join();
+      state.suggestions = next;
+      renderSuggestBadge();
+      if (changed) refreshAnalyze();
+    } catch (e) { console.error('suggestions failed', e); }
+  }, delay);
+}
+
+function renderSuggestBadge() {
+  const n = state.suggestions.length, tab = $('tab-analyze');
+  tab.innerHTML = n ? `Analyze <span class="badge uncertain" id="analyze-badge" title="Suggested re-files waiting for you">${n}</span>` : 'Analyze';
+}
+
+// Accept = what tools/refile.mjs writes: a NEW observation (sync merges taps by id, never overwriting one) + a tombstone for the old id.
+async function acceptSuggestion(id) {
+  const s = state.suggestions.find((x) => x.id === id), o = state.obs.find((x) => x.id === id);
+  if (!s || !o) return;
+  const { newObs, tombstone } = refileOf(o, s);
+  await store.refileObservation(o.id, newObs, tombstone);
+  state.obs = [...state.obs.filter((x) => x.id !== o.id), newObs];
+  if (state.lastObs?.id === o.id) state.lastObs = null;
+  state.suggestions = state.suggestions.filter((x) => x.id !== id);
+  noteLastTaps();
+  scheduleRecompute();
+  scheduleSuggest(0); renderSuggestBadge(); refreshAnalyze(); tick();
+}
+
+async function dismissSuggestion(id) {
+  const d = { id: `dis_${id}`, obsId: id, at: Date.now() };
+  await store.putDismissal(d);
+  state.dismissals = [...state.dismissals.filter((x) => x.id !== d.id), d];
+  state.suggestions = state.suggestions.filter((x) => x.id !== id);
+  renderSuggestBadge(); refreshAnalyze();
 }
 
 function syncApi() {

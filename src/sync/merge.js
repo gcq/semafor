@@ -7,6 +7,10 @@
 //    (union by id). Nothing is ever lost, so the oldest data always survives.
 //  - Intersections are mutable definitions: last edit wins, compared by `rev`
 //    (a monotonic counter bumped on every save) with `updatedAt` as tiebreaker.
+//  - Tracks (the GPS fixes around a tap, src/nav/trackrec.js) and dismissals (a suggested re-file the
+//    user declined, src/osm/suggest.js) are immutable records with unique ids: union by id. A track whose
+//    taps are all tombstoned (undone, or re-filed) is dropped. Old clients know neither field and ignore
+//    them; a bundle without them merges exactly as before.
 //  - Deletions propagate via tombstones (an id + when it was deleted), so a
 //    delete on one device isn't undone by an older copy on the other. That
 //    covers intersections and undone observations (tombstone kind 'obs') — an
@@ -17,7 +21,9 @@
 /** @typedef {import('../domain/model.js').Intersection} Intersection */
 /** @typedef {import('../domain/model.js').Observation} Observation */
 /** @typedef {{ id: string, deletedAt: number, rev?: number, kind?: 'obs' }} Tombstone */
-/** @typedef {{ intersections: Intersection[], observations: Observation[], tombstones?: Tombstone[] }} Bundle */
+/** @typedef {{ id: string, obsIds: string[], t0: number, v: number, p: number[] }} Track */
+/** @typedef {{ id: string, obsId: string, at: number }} Dismissal */
+/** @typedef {{ intersections: Intersection[], observations: Observation[], tombstones?: Tombstone[], tracks?: Track[], dismissals?: Dismissal[] }} Bundle */
 
 /** Which of two revisions is newer: higher rev wins, else newer updatedAt. */
 export function newer(a, b) {
@@ -30,10 +36,10 @@ export function newer(a, b) {
  * Merge two bundles into one convergent result.
  * @param {Bundle} local
  * @param {Bundle} remote
- * @returns {{ merged: Bundle, stats: { ixAdded: number, ixUpdated: number, ixDeleted: number, obsAdded: number, obsRemoved: number } }}
+ * @returns {{ merged: Bundle, stats: { ixAdded: number, ixUpdated: number, ixDeleted: number, obsAdded: number, obsRemoved: number, trkAdded: number, disAdded: number } }}
  */
 export function mergeBundles(local, remote) {
-  const stats = { ixAdded: 0, ixUpdated: 0, ixDeleted: 0, obsAdded: 0, obsRemoved: 0 };
+  const stats = { ixAdded: 0, ixUpdated: 0, ixDeleted: 0, obsAdded: 0, obsRemoved: 0, trkAdded: 0, disAdded: 0 };
 
   // --- tombstones: newest delete per id wins ---
   const tombs = new Map();
@@ -65,8 +71,17 @@ export function mergeBundles(local, remote) {
   for (const o of remote.observations ?? []) if (!obs.has(o.id) && tombs.get(o.id)?.kind !== 'obs') { obs.set(o.id, o); stats.obsAdded++; }
   for (const [id, t] of tombs) if (t.kind === 'obs' && obs.delete(id)) stats.obsRemoved++; // undone taps
 
+  // --- tracks + dismissals: union by id ---
+  const gone = (id) => tombs.get(id)?.kind === 'obs';
+  const trk = new Map();
+  for (const r of local.tracks ?? []) if (!(r.obsIds ?? []).every(gone)) trk.set(r.id, r);
+  for (const r of remote.tracks ?? []) if (!trk.has(r.id) && !(r.obsIds ?? []).every(gone)) { trk.set(r.id, r); stats.trkAdded++; }
+  const dis = new Map();
+  for (const d of local.dismissals ?? []) dis.set(d.id, d);
+  for (const d of remote.dismissals ?? []) if (!dis.has(d.id)) { dis.set(d.id, d); stats.disAdded++; }
+
   return {
-    merged: { intersections: [...ix.values()], observations: [...obs.values()], tombstones: [...tombs.values()] },
+    merged: { intersections: [...ix.values()], observations: [...obs.values()], tombstones: [...tombs.values()], tracks: [...trk.values()], dismissals: [...dis.values()] },
     stats,
   };
 }

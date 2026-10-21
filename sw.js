@@ -7,10 +7,10 @@ const ASSETS = [
   'icons/icon.svg', 'icons/favicon-32.png', 'icons/apple-touch-icon.png', 'icons/icon-192.png',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'src/ui/app.js', 'src/ui/dom.js', 'src/ui/live-scene.js', 'src/ui/editor.js', 'src/ui/analyze.js', 'src/ui/sync.js', 'src/store/db.js',
-  'src/predict/next.js', 'src/predict/sequence.js', 'src/nav/proximity.js', 'src/nav/motion.js',
+  'src/predict/next.js', 'src/predict/sequence.js', 'src/nav/proximity.js', 'src/nav/motion.js', 'src/nav/trackrec.js',
   'src/inference/heads.js', 'src/inference/clock.js', 'src/inference/worker.js',
   'src/sync/merge.js', 'src/sync/net.js', 'src/osm/streets.js',
-  'src/osm/lanes.js', 'src/osm/lanes-worker.js', 'src/osm/lanes-client.js', 'src/osm/lanes-cache.js', 'src/osm/approaches.js',
+  'src/osm/lanes.js', 'src/osm/lanes-worker.js', 'src/osm/lanes-client.js', 'src/osm/lanes-cache.js', 'src/osm/approaches.js', 'src/osm/trackmatch.js', 'src/osm/suggest.js',
   'vendor/osm2streets/osm2streets_js.js', 'vendor/osm2streets/osm2streets_js_bg.wasm', // street lanes; the wasm must work offline
   'src/domain/model.js',
 ];
