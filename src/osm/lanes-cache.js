@@ -15,7 +15,7 @@
 
 import { areaBbox, bboxCenter } from './lanes.js';
 
-export const STREETS_FORMAT = 3; // bump when the compact `data` format, the covered area or the keying changes (3: approach linkage; 2: ±200 m clusters; 1: per-intersection ±80 m)
+export const STREETS_FORMAT = 4; // bump when the compact `data` format, the covered area or the keying changes (4: lane bearings `b`; 3: approach linkage; 2: ±200 m clusters; 1: per-intersection ±80 m)
 export const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 export const MOVED_M = 5; // a member moved further than this from where the entry was built -> rebuild
 // Single-linkage distance between junction centres. Each junction's street area

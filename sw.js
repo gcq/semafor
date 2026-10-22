@@ -10,7 +10,7 @@ const ASSETS = [
   'src/predict/next.js', 'src/predict/sequence.js', 'src/nav/proximity.js', 'src/nav/motion.js', 'src/nav/trackrec.js',
   'src/inference/heads.js', 'src/inference/clock.js', 'src/inference/worker.js',
   'src/sync/merge.js', 'src/sync/net.js', 'src/osm/streets.js',
-  'src/osm/lanes.js', 'src/osm/lanes-worker.js', 'src/osm/lanes-client.js', 'src/osm/lanes-cache.js', 'src/osm/approaches.js', 'src/osm/trackmatch.js', 'src/osm/suggest.js',
+  'src/osm/lanes.js', 'src/osm/lanes-worker.js', 'src/osm/lanes-client.js', 'src/osm/lanes-cache.js', 'src/osm/approaches.js', 'src/osm/lanesnap.js', 'src/osm/trackmatch.js', 'src/osm/suggest.js',
   'vendor/osm2streets/osm2streets_js.js', 'vendor/osm2streets/osm2streets_js_bg.wasm', // street lanes; the wasm must work offline
   'src/domain/model.js',
 ];

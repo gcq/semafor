@@ -123,10 +123,10 @@ const rings = (g) => (g?.type === 'Polygon' ? [g.coordinates[0]] : g?.type === '
  * osm2streets outputs -> compact drawable structure, in integer centimetres east/north of `center`.
  * @param {{lanes:string|Object, markings:string|Object, imarkings:string|Object, plain:string|Object}} outputs
  * @param {{lat:number,lon:number}} center
- * @returns {{layers:Array<{z:number, lanes:Array<{k:string,r:number[],a?:number}>, ints:number[][], corner:number[][],
+ * @returns {{layers:Array<{z:number, lanes:Array<{k:string,r:number[],a?:number,b?:number}>, ints:number[][], corner:number[][],
  *   sep:number[][], mid:number[][], stop:number[][], arrow:number[][], zebra:number[][], appr?:number[][]}>}}
  *   every ring `r` is a flat [x0,y0,x1,y1,…] (cm), not closed; layer 0 may carry `appr` (see linkApproaches),
- *   referenced by its incoming driving lanes' `a`
+ *   referenced by its incoming driving lanes' `a`; layer-0 driving lanes also carry their travel bearing `b` (deg)
  */
 export function compactLanes(outputs, center) {
   const kx = R * RAD * Math.cos(center.lat * RAD) * 100, ky = R * RAD * 100;
@@ -187,9 +187,25 @@ export function compactLanes(outputs, center) {
     else if (p.type === 'sidewalk corner') layer(0).corner.push(r);
   });
 
+  for (const c of incoming) {
+    const [src, dst] = roadEnds.get(c.road) ?? [], from = ixCentre.get(c.fwd ? src : dst), to = ixCentre.get(c.fwd ? dst : src);
+    if (from && to) c.lane.b = laneBearing(c.r, from, to);
+  }
   if (incoming.length) linkApproaches(layer(0), incoming, roadEnds, ixCentre);
 
   return { layers: [...layers.values()].sort((a, b) => a.z - b.z) };
+}
+
+// Travel bearing (compass deg) of a driving lane: its long axis (the two ring vertices furthest
+// apart), signed to run from the intersection it starts at towards the one it ends at.
+function laneBearing(r, from, to) {
+  let ax = 0, ay = 0, d2 = -1;
+  for (let i = 0; i < r.length; i += 2) for (let j = i + 2; j < r.length; j += 2) {
+    const dx = r[j] - r[i], dy = r[j + 1] - r[i + 1], d = dx * dx + dy * dy;
+    if (d > d2) { d2 = d; ax = dx; ay = dy; }
+  }
+  if (ax * (to[0] - from[0]) + ay * (to[1] - from[1]) < 0) { ax = -ax; ay = -ay; }
+  return (Math.round(Math.atan2(ax, ay) / RAD) + 360) % 360;
 }
 
 // A lane's end is the edge of its ring nearest the intersection it runs into: the two

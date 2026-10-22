@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { deadReckon, offsetBetween, decayOffset, applyOffset, easeAngle } from '../src/nav/motion.js';
+import { deadReckon, turnRate, TURN_MAX_S, offsetBetween, decayOffset, applyOffset, easeAngle } from '../src/nav/motion.js';
 import { distanceM, bearingDeg } from '../src/nav/proximity.js';
 
 const fix = { lat: 41.4, lon: 2.0, speed: 10, course: 335, t: 1000 };
@@ -18,6 +18,21 @@ test('deadReckon holds when stopped, course unknown or no fix', () => {
   assert.deepEqual(deadReckon({ ...fix, speed: 0.2 }, 2000), { lat: 41.4, lon: 2.0 });
   assert.deepEqual(deadReckon({ ...fix, course: null }, 2000), { lat: 41.4, lon: 2.0 });
   assert.equal(deadReckon(null, 0), null);
+});
+
+test('turnRate: course change per second, shortest arc; 0 when unknown', () => {
+  assert.equal(turnRate({ course: 350, t: 0 }, { course: 20, t: 1000 }), 30);
+  assert.equal(turnRate({ course: 90, t: 0 }, { course: 45, t: 500 }), 90);
+  assert.equal(turnRate(null, { course: 20, t: 1000 }), 0);
+  assert.equal(turnRate({ course: null, t: 0 }, { course: 20, t: 1000 }), 0);
+  assert.equal(turnRate({ course: 10, t: 1000 }, { course: 20, t: 1000 }), 0);
+});
+
+test('deadReckon cuts the projection short while cornering, so the arrow is not carried off the road', () => {
+  const turning = { ...fix, turn: 40 };
+  assert.ok(Math.abs(distanceM(fix, deadReckon(turning, 5000)) - fix.speed * TURN_MAX_S) < 0.05);
+  assert.ok(Math.abs(distanceM(fix, deadReckon({ ...fix, turn: 5 }, 5000)) - 15) < 0.1); // gentle bend: full projection
+  assert.ok(Math.abs(distanceM(fix, deadReckon(turning, 5000, 0.1)) - 1) < 0.05); // never longer than the caller's cap
 });
 
 test('blend offset: starts at the old displayed point, decays to the target without overshoot', () => {

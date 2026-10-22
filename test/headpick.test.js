@@ -57,7 +57,8 @@ test('latch: frozen near the stop line, then passed once crossed', () => {
   s = step(s, 14, -9); // 9 m before the line, GPS jumps toward B: no re-pick
   assert.deepEqual([s.headId, s.reason], ['h_mA', 'latched']);
   s = step(s, 20, -9.5); assert.deepEqual([s.headId, s.reason], ['h_mA', 'latched']);
-  s = step(s, 0, 1); // crossed A's stop line (past by 11 m)
+  s = step(s, 0, -6); assert.deepEqual([s.headId, s.reason], ['h_mA', 'latched']); // one fix just past the line is not crossing yet (GPS noise)
+  s = step(s, 0, 1); // crossed A's stop line (past by 11 m: clear of any noise)
   assert.deepEqual([s.headId, s.reason, s.nextIxId], ['h_mA', 'passed', null]); // nothing ahead: keep, no flicker
   s = step(s, 20, 3); assert.deepEqual([s.headId, s.reason], ['h_mA', 'passed']); // and no re-pick from the junction box
 });
@@ -80,10 +81,10 @@ test('crossing hands over to the next approach ahead: same junction -> its head,
   const go = (p, n) => step(p, 0, n, 0, 'X', s2);
   let s = go(null, -30);
   assert.equal(s.headId, 'h_mA');
-  s = go(s, 0); // 5 m past the first line; next ahead: X's second line, 15 m on
+  s = go(s, -1); s = go(s, 0); // 5 m past the first line (two fixes); next ahead: X's second line, 15 m on
   assert.deepEqual([s.headId, s.reason], ['h_mA2', 'lane']);
   s = go(s, 8); assert.deepEqual([s.headId, s.reason], ['h_mA2', 'latched']);
-  s = go(s, 20); // crossed the second line: the next approach ahead is Y's (80 m on)
+  s = go(s, 19); s = go(s, 20); // crossed the second line: the next approach ahead is Y's (80 m on)
   assert.deepEqual([s.headId, s.reason, s.nextIxId], ['h_mA2', 'passed', 'Y']);
   assert.equal(go(null, 40).headId, null); // joined late: both X lines already behind -> bearing fallback
 });
@@ -131,3 +132,12 @@ test('pickIntersection: a passed junction is skipped while another is ahead, kep
 });
 
 test('PICK constants are what the docs say', () => assert.deepEqual([PICK.courseTol, PICK.maxDist, PICK.switchFixes], [45, 20, 2]));
+
+test('one noisy fix just past the stop line does not pass the approach; a fix back before the line restarts the count', () => {
+  let s = step(null, 0, -40);
+  s = step(s, 0, -12);
+  s = step(s, 1, -4); assert.deepEqual([s.headId, s.reason], ['h_mA', 'latched']); // a fix 6 m past the line, the car still queuing before it
+  s = step(s, 0, -14); assert.equal(s.reason, 'latched');
+  s = step(s, 0, -4); assert.equal(s.reason, 'latched'); // count restarted
+  s = step(s, 0, -3); assert.equal(s.reason, 'passed');
+});

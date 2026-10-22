@@ -93,6 +93,8 @@ export const PICK = {
   switchFixes: 2,  // ... for this many consecutive fixes to take over (GPS noise between parallel roads)
   latchM: 12,      // this close to (before) your approach's stop point the pick is frozen
   crossM: 2,       // past the stop line by this much = crossed (a noisy fix right on the line isn't)
+  crossFixes: 2,   // ... on this many consecutive fixes: 5-10 m of GPS noise throws one fix across the line while you still queue before it,
+  crossClearM: 10, // ... unless a single fix is this far past it (beyond any noise: fast traffic must not wait a whole extra fix)
   nextMax: 80,     // the next approach ahead: stop point 3..80 m ahead along your course,
   nextMin: 3,
   nextLat: 20,     // ... at most this far to the side; nearest by along + nextSide * side, so a parallel road's line loses
@@ -180,7 +182,7 @@ export function nextApproachAhead(set, ego, course, skipKey) {
  * One fix of the head picker for junction `ixId`. Idempotent per `fixId` (call it as often as
  * you like; hysteresis counts distinct fixes). Returns the new state (pass it back as `prev`):
  *  reason 'lane'    the approach you're on (nearest lanes, hysteresis),
- *         'latched' within latchM of its stop point: frozen, no re-pick,
+ *         'latched' within latchM of its stop point (or past it for fewer than crossFixes fixes): frozen, no re-pick,
  *         'passed'  you crossed its stop line: head kept only until something ahead takes over;
  *                   `nextIxId` = the junction of the next approach ahead (null = nothing ahead),
  *         'bearing' no usable approach: the caller falls back to bearings (headId null).
@@ -221,6 +223,10 @@ export function pickHead({ set, ixId, ego, course, prev, fixId }) {
     // far past the junction a real approach (coming back, another road) takes over; else the passed head stays (no flicker)
     const centre = set.centres.get(ixId);
     if (centre && Math.hypot(ego.e - centre.e, ego.n - centre.n) > PICK.releaseM) { const r = lanes(null); if (r.headId) return r; }
+  }
+  if (cur.reason !== 'passed' && along(P, ego) > PICK.crossM && along(P, ego) < PICK.crossClearM) { // just past the line: only a run of such fixes counts as crossed
+    const n = (cur.cross ?? 0) + 1;
+    if (n < PICK.crossFixes) return done({ key: P.key, headId: P.headId, reason: 'latched', cross: n });
   }
   if (cur.reason === 'passed' || along(P, ego) > PICK.crossM) { // crossed its stop line: move on to the next approach ahead
     const next = nextApproachAhead(set, ego, course, P.key);

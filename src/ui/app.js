@@ -4,9 +4,10 @@
 import * as store from '../store/db.js';
 import { nextOnset, nextChange, currentAspect, phaseTable, withTap, predictMark } from '../predict/next.js';
 import { guardAspect, tapped } from '../predict/sequence.js';
-import { deadReckon, offsetBetween, decayOffset, applyOffset, easeAngle } from '../nav/motion.js';
+import { deadReckon, turnRate, offsetBetween, decayOffset, easeOffset, applyOffset, easeAngle } from '../nav/motion.js';
 import { rankNext, headForApproach, viewBearing, pickIntersection, distanceM } from '../nav/proximity.js';
 import { approachCandidates, pickHead, toLocal } from '../osm/approaches.js';
+import { snapToLane } from '../osm/lanesnap.js';
 import { ALGO_VERSION, computeModel } from '../inference/clock.js';
 import { createRecorder } from '../nav/trackrec.js';
 import { pendingSuggestions, refileOf } from '../osm/suggest.js';
@@ -147,7 +148,8 @@ function startGps() {
     (p) => {
       state.pos = { lat: p.coords.latitude, lon: p.coords.longitude };
       trackRec.fix({ t: Number.isFinite(p.timestamp) ? p.timestamp : Date.now(), lat: p.coords.latitude, lon: p.coords.longitude, heading: p.coords.heading, speed: p.coords.speed, acc: p.coords.accuracy });
-      state.fix = { ...state.pos, speed: Number.isFinite(p.coords.speed) ? p.coords.speed : 0, course: Number.isFinite(p.coords.heading) ? p.coords.heading : null, t: performance.now() };
+      const fix = { ...state.pos, speed: Number.isFinite(p.coords.speed) ? p.coords.speed : 0, course: Number.isFinite(p.coords.heading) ? p.coords.heading : null, t: performance.now() };
+      state.fix = { ...fix, turn: turnRate(state.fix, fix) };
       state.fixNew = true;
       state.heading = Number.isFinite(p.coords.heading) ? p.coords.heading : null;
       state.speed = Number.isFinite(p.coords.speed) ? p.coords.speed : 0;
@@ -336,6 +338,13 @@ function approachBearing(ix) {
   return viewBearing({ heading: state.heading, headingFrozen: state.headingFrozen, speed: state.speed, pos: state.pos, target: ix.location });
 }
 
+// The car's own course for the lane snap: live GPS course while moving, else the last one held. Not
+// approachBearing: that can still be the previous street's direction just after a turn. No course = no snap.
+function carCourse() {
+  const f = state.fix;
+  return f?.course != null && f.speed >= 1.5 ? f.course : state.headingFrozen;
+}
+
 // One head-picker step per GPS fix (idempotent within a fix) from the raw fix position: the
 // approach you are on, see pickHead. Nothing without lane geometry, a fix or a course.
 let lastPick = null; // { ixId, headId, reason } for the debug hook
@@ -377,9 +386,16 @@ function drawFrame(ts, force) {
   const dt = lastFrameT ? Math.min(0.5, (ts - lastFrameT) / 1000) : 0;
   lastFrameT = ts; lastDraw = ts;
   const upTarget = approachBearing(sc.ix) ?? 0;
-  const target = deadReckon(state.fix, ts) ?? state.pos;
-  if (!shown || shown.ixId !== sc.ix.id) shown = { ixId: sc.ix.id, pos: target, off: { dlat: 0, dlon: 0 }, up: upTarget }; // snap
+  // the arrow sits on a driving lane of your direction when one is near (raw GPS often lands on the sidewalk);
+  // the lane snap is an offset from the raw position, eased so it glides when the lane in reach changes
+  const raw = deadReckon(state.fix, ts) ?? state.pos;
+  const want = raw ? offsetBetween(snapToLane(streetFeed.get(sc.ix.id), raw, carCourse()), raw) : { dlat: 0, dlon: 0 };
+  const fresh = !shown || shown.ixId !== sc.ix.id;
+  const lane = fresh ? want : easeOffset(shown.lane, want, dt);
+  const target = raw && applyOffset(raw, lane);
+  if (fresh) shown = { ixId: sc.ix.id, pos: target, off: { dlat: 0, dlon: 0 }, lane, up: upTarget }; // snap
   else {
+    shown.lane = lane;
     shown.up = easeAngle(shown.up, upTarget, dt);
     if (target && state.fixNew && shown.pos) shown.off = offsetBetween(shown.pos, target); // new fix: blend from where we were drawn
     state.fixNew = false;
