@@ -439,7 +439,9 @@ function renderLive(ix) {
   const neighbors = streetFeed.neighborIds(ix.id)
     .map((id) => state.intersections.find((o) => o.id === id)).filter(Boolean)
     .map((n) => ({ ix: n, aspectOf: aspectOfC }));
-  state.liveScene = { ix, aspectOf: aspectOfC, activeHeadId: active?.id ?? null, neighbors, tintOf };
+  // a head whose stop line you already crossed stays picked (no flicker) but is no longer highlighted
+  const behind = lastPick?.ixId === ix.id && lastPick.reason === 'passed';
+  state.liveScene = { ix, aspectOf: aspectOfC, activeHeadId: behind ? null : active?.id ?? null, neighbors, tintOf };
   if (!rafId) drawFrame(performance.now(), true); // no loop running (e.g. rAF throttled): still draw on the tick
 
   renderCountdown(active, now);
